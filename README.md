@@ -1,4 +1,4 @@
-# Yums AI
+# 😋 Yums AI
 
 Yums is a convenient platform that logs into your Gmail inbox, reads your unread
 emails, and uses AI (OpenAI's API) to sort them into two categories:
