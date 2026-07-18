@@ -48,7 +48,7 @@ Under the hood, Yums treats every unread message the same way. Yums is quiet, me
 ### 1. Clone the repository and install dependencies
 
 ```bash
-git clone https://github.com/your-username/yums-ai.git
+git clone https://github.com/Jamil-Shirinov/yums-ai.git
 cd yums-ai
 python3 -m venv venv
 source venv/bin/activate      # on Windows: venv\Scripts\activate
