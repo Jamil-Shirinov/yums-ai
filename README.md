@@ -50,8 +50,8 @@ Under the hood, Yums treats every unread message the same way. Yums is quiet, me
 ```bash
 git clone https://github.com/Jamil-Shirinov/yums-ai.git
 cd yums-ai
-python3 -m venv venv
-source venv/bin/activate      # on Windows: venv\Scripts\activate
+python3 -m venv anenv
+source anenv/bin/activate      # on Windows: anenv\Scripts\activate
 pip install -r requirements.txt
 ```
 
