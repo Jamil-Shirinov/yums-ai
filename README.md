@@ -170,4 +170,4 @@ Issues and pull requests are welcome. Contributions that expand Gmail's permissi
 
 ## License
 
-No license yet. Until a license is added, all rights for the project and repository are reserved by [Jamil Shirinov](https://jshirinov.org), the repository owner.
+No license yet. Until a license is added, all rights for the project and repository are reserved by [Jamil Shirinov](https://jshirinov.com), the repository owner.
