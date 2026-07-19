@@ -45,6 +45,7 @@ Under the hood, Yums treats every unread message the same way. Yums is quiet, me
 
 ## Setup
 
+**Important!** If you would like to use Yums AI for your inbox, please, first contact me at [jamil_shirinov@berkeley.edu](mailto:jamil_shirinov@berkeley.edu). Otherwise, Google OAuth will block you from connecting your Gmail.
 ### 1. Clone the repository and install dependencies
 
 ```bash
