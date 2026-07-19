@@ -1,10 +1,9 @@
 # 😋 Yums AI
 
-Yums is a convenient platform that logs into your Gmail inbox, reads your unread
-emails, and uses AI (OpenAI's API) to sort them into two categories:
+Yums is a convenient platform that logs into your Gmail inbox, reads your unread emails, and uses AI (OpenAI's API) to sort them into two categories:
 
 - **Actions** — emails that need you to *do* something (reply, approve, complete a task, make a decision, etc.)
-- **Notices** — purely informational emails (newsletters, receipts, automated confirmations, etc. ) that do not need a response.
+- **Notices** — purely informational emails (newsletters, receipts, automated confirmations, etc.) that do not need a response.
 
 The platform is **read-only**: Yums is respectful of your personal space and will never send, delete, or modify your emails. It is **view-only**.
 
@@ -72,7 +71,6 @@ A virtual environment is recommended to isolate this project's dependencies.
 - Application type: **Desktop app**.
 - Click **Create**, then **Download JSON** on the resulting credential.
 6. Rename the downloaded file to `credentials.json` and place it in the project root, next to `main.py`.
-> The app remains in "Testing" mode by default, which is sufficient for personal use. Google restricts access to the explicitly added test users.
 
 ### 3. Configure the OpenAI API key
 
