@@ -83,7 +83,7 @@ def save_report(report_markdown: str) -> str:
     return filename
 
 # --------------------
- 
+
 def main():
     args = parse_args()
 
@@ -120,7 +120,7 @@ def main():
             "read-only Gmail access by design. See the README for how to "
             "opt in to the broader scope if you want this feature."
         )
- 
+
 if __name__ == "__main__":
     main()
     
