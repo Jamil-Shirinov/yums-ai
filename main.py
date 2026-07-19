@@ -78,7 +78,7 @@ def save_report(report_markdown: str) -> str:
 
     os.makedirs("output", exist_ok=True)
     filename = f"output/inbox_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         f.write(report_markdown)
     return filename
 
