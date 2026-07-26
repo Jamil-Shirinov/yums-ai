@@ -13,17 +13,7 @@
     <a class="logo" href="{{ url_for('index') }}">😋 Yums AI</a>
     <nav>
       {% if user %}
-        {# The Google profile picture, once Gmail is connected. Before that
-           (or if the account has no photo) we show their initial instead.
-           Either way the email is in the title, so hovering still shows it. #}
-        {% if user['gmail_picture'] %}
-          <img class="avatar" src="{{ user['gmail_picture'] }}"
-               alt="Your Google profile picture" title="{{ user['email'] }}"
-               referrerpolicy="no-referrer">
-        {% else %}
-          <span class="avatar avatar-initial" title="{{ user['email'] }}"
-                aria-label="{{ user['email'] }}">{{ user['email'][0] | upper }}</span>
-        {% endif %}
+        <span class="nav-email">{{ user['email'] }}</span>
         <a href="{{ url_for('dashboard') }}">Dashboard</a>
         <a href="{{ url_for('logout') }}">Log out</a>
       {% else %}

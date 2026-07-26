@@ -273,14 +273,11 @@ def gmail_callback():
         flow.fetch_token(authorization_response=request.url)
         credentials = flow.credentials
 
-        # Ask Google which address we just connected to, plus the profile
-        # picture for the header. A missing picture is fine - the header
-        # falls back to the user's initial.
+        # Ask Gmail which address we just connected to, so we can show it.
         service, _ = gmail_oauth.build_service(credentials.to_json())
         address = gmail_oauth.get_connected_address(service)
-        picture = gmail_oauth.get_profile_picture(credentials)
 
-        database.save_gmail_token(user["id"], credentials.to_json(), address, picture)
+        database.save_gmail_token(user["id"], credentials.to_json(), address)
         flash(f"Gmail connected: {address}", "success")
     except Exception as error:
         print(f"[gmail_callback] {type(error).__name__}: {error}")

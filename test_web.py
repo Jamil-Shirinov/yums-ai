@@ -153,26 +153,6 @@ def run_checks() -> int:
     check("plan shown by name only, without a price", b"$2.99" not in response.data)
     check("upgrade button sits next to the plan",
           b">Upgrade</a>" in response.data and b'href="/upgrade"' in response.data)
-
-    print("\n-- header avatar --")
-    check("email text no longer printed in the header", b'class="nav-email"' not in response.data)
-    check("falls back to an initial before gmail is connected",
-          b'class="avatar avatar-initial"' in response.data and b">B</span>" in response.data)
-
-    # Pretend a Gmail connection handed us a profile picture.
-    database.save_gmail_token(user["id"], '{"token": "fake"}', "boss@gmail.com",
-                              "https://lh3.googleusercontent.com/fake-avatar")
-    response = client.get("/dashboard")
-    check("google profile picture used once connected",
-          b'class="avatar"' in response.data
-          and b"lh3.googleusercontent.com/fake-avatar" in response.data)
-    check("initial no longer shown", b"avatar-initial" not in response.data)
-
-    database.clear_gmail_token(user["id"])
-    response = client.get("/dashboard")
-    check("disconnecting clears the picture too",
-          b"lh3.googleusercontent.com" not in response.data
-          and b"avatar-initial" in response.data)
     response = client.post("/analyze", follow_redirects=True)
     check("analyze refuses without gmail", b"Connect your Gmail account first" in response.data)
 

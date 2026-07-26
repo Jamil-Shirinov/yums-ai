@@ -74,27 +74,9 @@ a { color: var(--accent-dark); }
 .site-header nav a:hover { color: var(--ink); }
 .site-header nav a.btn { color: #fff; }
 
-/* Sits first in the nav, so it's the leftmost item in the group. */
-.avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-/* Shown until Gmail is connected: the first letter of the account email. */
-.avatar-initial {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent-wash);
-  color: var(--accent-dark);
-  border-color: #fde68a;
-  font-size: 0.95rem;
-  font-weight: 700;
-  user-select: none;
+.nav-email {
+  color: var(--ink-faint);
+  font-size: 0.9rem;
 }
 
 .page {
@@ -618,4 +600,5 @@ input:focus {
 @media (max-width: 600px) {
   .hero h1 { font-size: 1.9rem; }
   .site-header { padding: 1rem; }
+  .nav-email { display: none; }
 }
