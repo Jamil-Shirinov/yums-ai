@@ -46,10 +46,18 @@ def init_db() -> None:
             plan           TEXT NOT NULL,
             gmail_token    TEXT,
             gmail_address  TEXT,
+            gmail_picture  TEXT,
             created_at     TEXT NOT NULL
         )
         """
     )
+
+    # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+    # so databases made before avatars were added need the new column bolting
+    # on by hand.
+    existing_columns = [row["name"] for row in conn.execute("PRAGMA table_info(users)")]
+    if "gmail_picture" not in existing_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN gmail_picture TEXT")
 
     # One row per "Analyze my inbox" click, so the dashboard can show history
     # and so refreshing the results page doesn't re-run (and re-bill) anything.
@@ -117,11 +125,17 @@ def update_plan(user_id: int, plan: str) -> None:
     conn.close()
 
 
-def save_gmail_token(user_id: int, token_json: str, gmail_address: str = None) -> None:
+def save_gmail_token(
+    user_id: int,
+    token_json: str,
+    gmail_address: str = None,
+    gmail_picture: str = None,
+) -> None:
     """Store (or update) the Gmail OAuth token for an account.
 
     gmail_address is optional because we also call this after a silent token
-    refresh, when the address hasn't changed and we don't want to clear it.
+    refresh, when the address and picture haven't changed and we don't want
+    to wipe them.
     """
 
     conn = get_connection()
@@ -129,19 +143,24 @@ def save_gmail_token(user_id: int, token_json: str, gmail_address: str = None) -
         conn.execute("UPDATE users SET gmail_token = ? WHERE id = ?", (token_json, user_id))
     else:
         conn.execute(
-            "UPDATE users SET gmail_token = ?, gmail_address = ? WHERE id = ?",
-            (token_json, gmail_address, user_id),
+            "UPDATE users SET gmail_token = ?, gmail_address = ?, gmail_picture = ? "
+            "WHERE id = ?",
+            (token_json, gmail_address, gmail_picture or "", user_id),
         )
     conn.commit()
     conn.close()
 
 
 def clear_gmail_token(user_id: int) -> None:
-    """Forget an account's Gmail connection (the "Disconnect" button)."""
+    """Forget an account's Gmail connection (the "Disconnect" button).
+
+    The avatar goes too - it came from the account we're disconnecting.
+    """
 
     conn = get_connection()
     conn.execute(
-        "UPDATE users SET gmail_token = NULL, gmail_address = NULL WHERE id = ?",
+        "UPDATE users SET gmail_token = NULL, gmail_address = NULL, "
+        "gmail_picture = NULL WHERE id = ?",
         (user_id,),
     )
     conn.commit()

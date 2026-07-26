@@ -220,7 +220,9 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 
 ## Security & privacy
  
-- Only the `gmail.readonly` OAuth scope is requested. The application cannot send, delete, or modify email.
+- `gmail.readonly` is the only Gmail scope requested by either front end. The application cannot send, delete, or modify email.
+- The web platform additionally requests `userinfo.profile`, purely to show the account's Google profile picture in the header. It grants no access to email of any kind. Removing it from `SCOPES` in `gmail_oauth.py` is safe — the header then falls back to showing the user's initial. The CLI does not request it.
+- Accounts connected before the profile scope was added keep working unchanged; they show an initial until the user disconnects and reconnects.
 - `.env`, `credentials.json`, `token.json`, and `yums.db` contain sensitive data and are excluded via `.gitignore`. These files should never be committed to version control.
 - Email subject lines, sender addresses, and body content are transmitted to OpenAI's API for classification. This tool should not be used on inboxes containing content that should not be shared with a third-party API provider.
 - Passwords are stored as salted hashes via Werkzeug's `generate_password_hash`. The plaintext password is never written to disk.

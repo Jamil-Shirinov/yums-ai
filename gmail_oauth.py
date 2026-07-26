@@ -18,13 +18,23 @@ as the CLI does - only the logging-in part is different.
 import json
 import os
 
-from google.auth.transport.requests import Request
+from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-# Same read-only scope the CLI asks for: we can view emails and nothing else.
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+# gmail.readonly is the same scope the CLI asks for: we can view emails and
+# nothing else. userinfo.profile is on top of that, purely so we can show the
+# account's Google profile picture in the header - it grants no extra access
+# to any email. Drop it from this list and the header falls back to showing
+# the user's initial instead.
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+
+# Returns the signed-in account's public profile, including "picture".
+USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 # --------------------
 
@@ -72,7 +82,13 @@ def build_service(token_json: str):
     JSON that the caller should save - otherwise it's None.
     """
 
-    creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+    # Note we don't pass SCOPES here. The saved token already records which
+    # scopes Google actually granted, and forcing today's list onto a token
+    # issued before we started asking for the profile scope would make the
+    # refresh complain about scopes the user never agreed to. Anyone who
+    # connected earlier keeps working; they just get the initial in the
+    # header instead of a photo until they reconnect.
+    creds = Credentials.from_authorized_user_info(json.loads(token_json))
     refreshed_token_json = None
 
     if not creds.valid:
@@ -98,3 +114,23 @@ def get_connected_address(service) -> str:
 
     profile = service.users().getProfile(userId="me").execute()
     return profile.get("emailAddress", "")
+
+# --------------------
+
+def get_profile_picture(credentials) -> str:
+    """Fetch the URL of the account's Google profile picture.
+
+    Returns "" if there isn't one - which happens for accounts with no photo
+    set, and for anyone who connected before we started asking for the
+    profile scope. The header falls back to an initial in that case, so this
+    swallows any failure rather than blocking the Gmail connection over a
+    missing avatar.
+    """
+
+    try:
+        response = AuthorizedSession(credentials).get(USERINFO_URL, timeout=10)
+        response.raise_for_status()
+        return response.json().get("picture", "") or ""
+    except Exception as error:
+        print(f"[get_profile_picture] couldn't fetch avatar: {type(error).__name__}: {error}")
+        return ""
