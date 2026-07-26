@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Yums AI - your inbox, triaged{% endblock %}
+
+{% block content %}
+
+<section class="hero">
+  <h1>Your unread inbox, sorted into<br><span class="accent">what to do</span> and <span class="muted-accent">what to know</span>.</h1>
+  <p class="lede">
+    Connect your company Gmail once. After that it's one button: Yums reads
+    every unread email and tells you which ones actually need you.
+  </p>
+  <a class="btn btn-big" href="{{ url_for('signup') }}">Get started free</a>
+</section>
+
+<section class="how">
+  <div class="step">
+    <span class="step-number">1</span>
+    <h3>Create an account</h3>
+    <p>Sign up with your work email and pick a plan that fits your inbox.</p>
+  </div>
+  <div class="step">
+    <span class="step-number">2</span>
+    <h3>Connect Gmail</h3>
+    <p>One click through Google's standard consent screen. Read-only access, nothing more.</p>
+  </div>
+  <div class="step">
+    <span class="step-number">3</span>
+    <h3>Press the button</h3>
+    <p>Get a clean report split into Actions Needed and Notices, every time.</p>
+  </div>
+</section>
+
+<section class="pricing" id="pricing">
+  <h2>Plans</h2>
+  <p class="section-sub">Your plan sets how many unread emails one analysis covers.</p>
+
+  <div class="plan-grid">
+    {% for plan_id, plan in PLANS.items() %}
+      <div class="plan-card {% if plan_id == 'pro' %}plan-featured{% endif %}">
+        {% if plan_id == 'pro' %}<span class="plan-badge">Most popular</span>{% endif %}
+        <h3>{{ plan['name'] }}</h3>
+        <p class="plan-price">{{ plan['price'] }} <span class="plan-period">{{ plan['period'] }}</span></p>
+        <p class="plan-blurb">{{ plan['blurb'] }}</p>
+        <ul class="plan-features">
+          {% for feature in plan['features'] %}
+            <li>{{ feature }}</li>
+          {% endfor %}
+        </ul>
+        <a class="btn btn-block" href="{{ url_for('signup', plan=plan_id) }}">Choose {{ plan['name'] }}</a>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

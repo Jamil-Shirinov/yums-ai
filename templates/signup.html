@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Sign up - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card form-card-wide">
+  <h1>Create your account</h1>
+  <p class="form-sub">You'll connect your Gmail on the next screen.</p>
+
+  <form method="post" action="{{ url_for('signup') }}">
+
+    <label for="email">Work email</label>
+    <input type="email" id="email" name="email" required autocomplete="email"
+           placeholder="you@company.com" value="{{ email }}">
+
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required
+           autocomplete="new-password" minlength="8"
+           placeholder="At least 8 characters">
+
+    <fieldset class="plan-picker">
+      <legend>Choose a plan</legend>
+      {% for plan_id, plan in PLANS.items() %}
+        <label class="plan-option">
+          <input type="radio" name="plan" value="{{ plan_id }}"
+                 {% if plan_id == selected_plan %}checked{% endif %}>
+          <span class="plan-option-body">
+            <strong>{{ plan['name'] }}</strong>
+            <span class="plan-option-price">{{ plan['price'] }} {{ plan['period'] }}</span>
+            <span class="plan-option-limit">{{ plan['email_limit'] }} emails per analysis</span>
+          </span>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <button type="submit" class="btn btn-block">Create account</button>
+  </form>
+
+  <p class="form-footer">Already have an account? <a href="{{ url_for('login') }}">Log in</a></p>
+</div>
+
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Inbox summary - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="results-header">
+  <div>
+    <h1 class="page-title">Inbox summary</h1>
+    <p class="muted">{{ run['created_at'].replace('T', ' ') }}</p>
+  </div>
+  <a class="btn btn-quiet" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+</div>
+
+<div class="score-row">
+  <div class="score">
+    <span class="score-number">{{ run['results'] | length }}</span>
+    <span class="score-label">unread processed</span>
+  </div>
+  <div class="score score-action">
+    <span class="score-number">{{ actions | length }}</span>
+    <span class="score-label">need action</span>
+  </div>
+  <div class="score score-notice">
+    <span class="score-number">{{ notices | length }}</span>
+    <span class="score-label">just notices</span>
+  </div>
+</div>
+
+{# --- Things the user actually has to do --- #}
+<section class="results-section">
+  <h2 class="section-heading heading-action">Actions needed</h2>
+  {% if actions %}
+    <ul class="email-list">
+      {% for item in actions %}
+        <li class="email-card email-action">
+          <div class="email-top">
+            <h3 class="email-subject">{{ item['email']['subject'] }}</h3>
+            <span class="email-sender">{{ item['email']['sender'] | sender_name }}</span>
+          </div>
+          <p class="email-summary">{{ item['summary'] }}</p>
+          {% if item['reason'] %}
+            <p class="email-reason">Why: {{ item['reason'] }}</p>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">Nothing needs your attention right now.</p>
+  {% endif %}
+</section>
+
+{# --- Everything else --- #}
+<section class="results-section">
+  <h2 class="section-heading heading-notice">Notices</h2>
+  {% if notices %}
+    <ul class="email-list">
+      {% for item in notices %}
+        <li class="email-card email-notice">
+          <div class="email-top">
+            <h3 class="email-subject">{{ item['email']['subject'] }}</h3>
+            <span class="email-sender">{{ item['email']['sender'] | sender_name }}</span>
+          </div>
+          <p class="email-summary">{{ item['summary'] }}</p>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="empty">No notices.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

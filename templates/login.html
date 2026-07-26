@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Log in - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+  <h1>Welcome back</h1>
+  <p class="form-sub">Log in to analyze your inbox.</p>
+
+  <form method="post" action="{{ url_for('login') }}">
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" required autocomplete="email">
+
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required autocomplete="current-password">
+
+    <button type="submit" class="btn btn-block">Log in</button>
+  </form>
+
+  <p class="form-footer">No account yet? <a href="{{ url_for('signup') }}">Sign up</a></p>
+</div>
+
+{% endblock %}
