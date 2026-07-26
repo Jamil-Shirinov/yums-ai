@@ -567,7 +567,7 @@ def stop_analysis(run_id: int):
         return redirect(url_for("dashboard"))
 
     if database.request_cancel(run_id, user["id"]):
-        flash("Stopping the analysis - it'll keep whatever it's done so far.", "info")
+        flash("Stopping the analysis. Yums will keep everything that was done so far!", "info")
     else:
         flash("That analysis had already finished.", "info")
 
