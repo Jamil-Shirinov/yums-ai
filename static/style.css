@@ -377,6 +377,31 @@ input:focus {
   color: var(--ink-soft);
 }
 
+/* The 6-digit confirmation code box: big, monospaced and widely spaced, so
+   digits are easy to check against the email. */
+.code-input {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  margin-bottom: 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 0.4em;
+  text-align: center;
+  text-indent: 0.4em;   /* re-centres despite the trailing letter-space */
+}
+
+.code-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: var(--card);
+}
+
+.resend-form { margin-top: 0.6rem; }
+
 /* Plan radio buttons on the signup form */
 
 .plan-picker {

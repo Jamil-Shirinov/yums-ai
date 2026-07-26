@@ -36,20 +36,47 @@ def init_db() -> None:
     conn = get_connection()
 
     # One row per account. gmail_token holds the OAuth token JSON we get back
-    # from Google, and stays NULL until the user connects their Gmail.
+    # from Google, and stays NULL until the user connects their Gmail. The
+    # verification_* columns hold the signup confirmation code while it's
+    # pending, and are cleared once the address is confirmed.
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS users (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            email          TEXT NOT NULL UNIQUE,
-            password_hash  TEXT NOT NULL,
-            plan           TEXT NOT NULL,
-            gmail_token    TEXT,
-            gmail_address  TEXT,
-            created_at     TEXT NOT NULL
+            id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+            email                    TEXT NOT NULL UNIQUE,
+            password_hash            TEXT NOT NULL,
+            plan                     TEXT NOT NULL,
+            gmail_token              TEXT,
+            gmail_address            TEXT,
+            verified                 INTEGER NOT NULL DEFAULT 0,
+            verification_code        TEXT,
+            verification_expires_at  TEXT,
+            verification_attempts    INTEGER NOT NULL DEFAULT 0,
+            created_at               TEXT NOT NULL
         )
         """
     )
+
+    # CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+    # so a database made before email confirmation needs these adding by hand.
+    # (The column names below are literals from this file, not user input.)
+    existing_columns = [row["name"] for row in conn.execute("PRAGMA table_info(users)")]
+
+    if "verified" not in existing_columns:
+        conn.execute("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
+        # Accounts that predate confirmation were never asked for a code.
+        # Marking them confirmed keeps their owners from being locked out of
+        # accounts they already use.
+        conn.execute("UPDATE users SET verified = 1")
+
+    for column in ("verification_code", "verification_expires_at"):
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
+
+    if "verification_attempts" not in existing_columns:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN verification_attempts INTEGER NOT NULL DEFAULT 0"
+        )
 
     # One row per "Analyze my inbox" click, so the dashboard can show history
     # and so refreshing the results page doesn't re-run (and re-bill) anything.
@@ -102,6 +129,48 @@ def get_user_by_id(user_id: int):
     row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     conn.close()
     return row
+
+
+def save_verification_code(user_id: int, code: str, expires_at: str) -> None:
+    """Store a fresh confirmation code, wiping any previous one.
+
+    The attempt counter resets too, so asking for a new code gives the user
+    a clean slate rather than leaving them locked out by earlier typos.
+    """
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET verification_code = ?, verification_expires_at = ?, "
+        "verification_attempts = 0 WHERE id = ?",
+        (code, expires_at, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def record_failed_attempt(user_id: int) -> None:
+    """Count one wrong guess, so we can stop someone trying all million codes."""
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET verification_attempts = verification_attempts + 1 WHERE id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_verified(user_id: int) -> None:
+    """Confirm the account and throw the used code away."""
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET verified = 1, verification_code = NULL, "
+        "verification_expires_at = NULL, verification_attempts = 0 WHERE id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
 
 
 def update_plan(user_id: int, plan: str) -> None:

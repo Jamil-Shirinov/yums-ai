@@ -11,6 +11,8 @@ Run it with:  python app.py
 """
 
 import os
+import secrets
+from datetime import datetime, timedelta
 from functools import wraps
 
 from dotenv import load_dotenv
@@ -20,9 +22,16 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 import database
 import gmail_oauth
+import mailer
 from classifier import classify_emails
 from gmail_client import fetch_unread_emails
 from plans import DEFAULT_PLAN, PLANS, TIERS, get_plan
+
+# How long a signup confirmation code stays usable, and how many wrong
+# guesses we allow before making the user request a fresh one. Six digits is
+# only a million possibilities, so without a cap they could all be tried.
+CODE_TTL_MINUTES = 15
+MAX_CODE_ATTEMPTS = 5
 
 load_dotenv()
 
@@ -65,6 +74,23 @@ def login_required(view):
         return view(*args, **kwargs)
 
     return wrapped_view
+
+
+def start_verification(user_id: int, email: str) -> bool:
+    """Generate a confirmation code, save it, and email it to the user.
+
+    Returns whether it actually went out by email - if not, the caller tells
+    the user to look in the server console instead.
+    """
+
+    # secrets, not random: this is a credential, so it needs to be
+    # unguessable rather than merely arbitrary. The formatting keeps leading
+    # zeros, so every one of the million codes is equally likely.
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    expires_at = datetime.now() + timedelta(minutes=CODE_TTL_MINUTES)
+
+    database.save_verification_code(user_id, code, expires_at.isoformat(timespec="seconds"))
+    return mailer.send_verification_code(email, code)
 
 
 def get_openai_client() -> OpenAI:
@@ -140,9 +166,23 @@ def signup():
             # generate_password_hash salts and hashes for us - the plain
             # password is never written down anywhere.
             user_id = database.create_user(email, generate_password_hash(password), plan)
-            session["user_id"] = user_id
-            flash(f"Welcome to Yums! You're on the {get_plan(plan)['name']} plan.", "success")
-            return redirect(url_for("dashboard"))
+
+            # Not logged in yet: the account stays unconfirmed, and only
+            # pending_user_id is set, until they prove they can read the
+            # inbox we just emailed.
+            session.clear()
+            session["pending_user_id"] = user_id
+            emailed = start_verification(user_id, email)
+
+            if emailed:
+                flash(f"We've emailed a 6-digit code to {email}.", "success")
+            else:
+                flash(
+                    "Email isn't set up on this server, so your code was printed "
+                    "to the terminal running the app.",
+                    "info",
+                )
+            return redirect(url_for("verify"))
 
     # On a failed POST we hand the email back so the user doesn't have to
     # retype it along with their password.
@@ -163,12 +203,91 @@ def login():
         # password", so this page can't be used to find out who has an account.
         if user is None or not check_password_hash(user["password_hash"], password):
             flash("Incorrect email or password.", "error")
+        elif not user["verified"]:
+            # Right password, but they never confirmed the address. Send a
+            # fresh code rather than leaving them stuck on an old one.
+            session.clear()
+            session["pending_user_id"] = user["id"]
+            start_verification(user["id"], user["email"])
+            flash("Please confirm your email first - we've sent you a new code.", "info")
+            return redirect(url_for("verify"))
         else:
             session.clear()
             session["user_id"] = user["id"]
             return redirect(url_for("dashboard"))
 
     return render_template("login.html")
+
+
+@app.route("/verify", methods=["GET", "POST"])
+def verify():
+    """Check the 6-digit code emailed at signup.
+
+    The account isn't usable until this passes, which is what proves the
+    person signing up can actually read mail at that address.
+    """
+
+    pending_id = session.get("pending_user_id")
+    if pending_id is None:
+        flash("Start by creating an account.", "info")
+        return redirect(url_for("signup"))
+
+    user = database.get_user_by_id(pending_id)
+    if user is None:
+        session.clear()
+        return redirect(url_for("signup"))
+
+    if user["verified"]:
+        # Already done - probably a stale tab. Just log them in.
+        session.clear()
+        session["user_id"] = user["id"]
+        return redirect(url_for("dashboard"))
+
+    if request.method == "POST":
+        entered = request.form.get("code", "").strip()
+
+        if not user["verification_code"]:
+            flash("That code is no longer valid. Send yourself a new one.", "error")
+        elif user["verification_attempts"] >= MAX_CODE_ATTEMPTS:
+            flash("Too many incorrect codes. Send yourself a new one.", "error")
+        elif datetime.now() > datetime.fromisoformat(user["verification_expires_at"]):
+            flash("That code has expired. Send yourself a new one.", "error")
+        elif not secrets.compare_digest(entered, user["verification_code"]):
+            database.record_failed_attempt(user["id"])
+            remaining = MAX_CODE_ATTEMPTS - (user["verification_attempts"] + 1)
+            if remaining > 0:
+                flash(f"That code isn't right. {remaining} attempt(s) left.", "error")
+            else:
+                flash("Too many incorrect codes. Send yourself a new one.", "error")
+        else:
+            database.mark_verified(user["id"])
+            session.clear()
+            session["user_id"] = user["id"]
+            flash("Email confirmed. Welcome to Yums!", "success")
+            return redirect(url_for("dashboard"))
+
+    return render_template("verify.html", email=user["email"])
+
+
+@app.route("/verify/resend", methods=["POST"])
+def resend_code():
+    """Throw away the pending code and email a fresh one."""
+
+    pending_id = session.get("pending_user_id")
+    if pending_id is None:
+        return redirect(url_for("signup"))
+
+    user = database.get_user_by_id(pending_id)
+    if user is None or user["verified"]:
+        session.clear()
+        return redirect(url_for("login"))
+
+    if start_verification(user["id"], user["email"]):
+        flash(f"New code sent to {user['email']}.", "success")
+    else:
+        flash("Email isn't set up on this server - check the terminal for your code.", "info")
+
+    return redirect(url_for("verify"))
 
 
 @app.route("/logout")

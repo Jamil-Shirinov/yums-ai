@@ -14,6 +14,7 @@ import argparse
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta
 
 from models import EmailMessage, EmailSummary
 
@@ -79,6 +80,21 @@ class Checker:
 
 # --------------------
 
+def signup_and_confirm(client, database, email, password, plan):
+    """Sign up and get through the emailed confirmation code.
+
+    The code never leaves the server in a test, so we read it straight out of
+    the database - which is exactly what a real user does by reading it out of
+    their inbox.
+    """
+
+    client.post("/signup", data={"email": email, "password": password, "plan": plan})
+    pending = database.get_user_by_email(email.strip().lower())
+    client.post("/verify", data={"code": pending["verification_code"]})
+    return database.get_user_by_email(email.strip().lower())
+
+# --------------------
+
 def run_checks() -> int:
     """Walk through the whole app the way a user would, and check what comes
     back. Returns the number of failures."""
@@ -133,8 +149,9 @@ def run_checks() -> int:
     print("\n-- signup works --")
     response = client.post("/signup",
                            data={"email": "Boss@Company.com", "password": "correcthorse", "plan": "pro"})
-    check("signup lands on dashboard",
-          response.status_code == 302 and "/dashboard" in response.headers["Location"])
+    check("signup sends you to confirm your email, not straight in",
+          response.status_code == 302 and "/verify" in response.headers["Location"],
+          response.headers.get("Location"))
     user = database.get_user_by_email("boss@company.com")
     check("email saved in lowercase", user is not None)
     check("chosen plan saved", user and user["plan"] == "pro", user["plan"] if user else None)
@@ -144,6 +161,55 @@ def run_checks() -> int:
     response = client.post("/signup",
                            data={"email": "boss@company.com", "password": "another1234", "plan": "free"})
     check("same email can't sign up twice", b"already an account" in response.data)
+
+    print("\n-- confirming the emailed code --")
+    check("account starts unconfirmed", user["verified"] == 0)
+    check("a code was generated", bool(user["verification_code"]))
+    check("code is exactly 6 digits",
+          len(user["verification_code"]) == 6 and user["verification_code"].isdigit(),
+          user["verification_code"])
+    check("code has an expiry", bool(user["verification_expires_at"]))
+    check("unconfirmed account is not logged in",
+          client.get("/dashboard").status_code == 302)
+
+    response = client.post("/verify", data={"code": "000000" if user["verification_code"] != "000000"
+                                            else "111111"})
+    check("wrong code refused", b"isn&#39;t right" in response.data)
+    check("wrong code counted",
+          database.get_user_by_id(user["id"])["verification_attempts"] == 1)
+    check("wrong code does not confirm the account",
+          database.get_user_by_id(user["id"])["verified"] == 0)
+
+    # Burn through the remaining attempts.
+    for _ in range(4):
+        client.post("/verify", data={"code": "999999"})
+    response = client.post("/verify", data={"code": user["verification_code"]})
+    check("locks out after too many wrong codes", b"Too many incorrect codes" in response.data)
+    check("even the right code won't work while locked out",
+          database.get_user_by_id(user["id"])["verified"] == 0)
+
+    response = client.post("/verify/resend")
+    check("resend redirects back to the form",
+          response.status_code == 302 and "/verify" in response.headers["Location"])
+    refreshed = database.get_user_by_id(user["id"])
+    check("resend issues a different code", refreshed["verification_code"] != user["verification_code"])
+    check("resend clears the attempt counter", refreshed["verification_attempts"] == 0)
+
+    expired = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
+    database.save_verification_code(user["id"], refreshed["verification_code"], expired)
+    response = client.post("/verify", data={"code": refreshed["verification_code"]})
+    check("expired code refused", b"has expired" in response.data)
+    check("expired code does not confirm the account",
+          database.get_user_by_id(user["id"])["verified"] == 0)
+
+    client.post("/verify/resend")
+    good_code = database.get_user_by_id(user["id"])["verification_code"]
+    response = client.post("/verify", data={"code": good_code})
+    check("correct code logs you in",
+          response.status_code == 302 and "/dashboard" in response.headers["Location"])
+    user = database.get_user_by_id(user["id"])
+    check("account now confirmed", user["verified"] == 1)
+    check("used code is thrown away", user["verification_code"] is None)
 
     print("\n-- dashboard before connecting gmail --")
     response = client.get("/dashboard")
@@ -203,7 +269,7 @@ def run_checks() -> int:
 
     print("\n-- one account can't read another's report --")
     other = webapp.app.test_client()
-    other.post("/signup", data={"email": "other@company.com", "password": "hunter2hunter2", "plan": "free"})
+    signup_and_confirm(other, database, "other@company.com", "hunter2hunter2", "free")
     response = other.get(f"/results/{run_id}", follow_redirects=True)
     check("other account can't see the report", b"sign your benefits form" not in response.data)
 
@@ -218,6 +284,19 @@ def run_checks() -> int:
     response = client.post("/login", data={"email": "boss@company.com", "password": "correcthorse"})
     check("correct password logs in",
           response.status_code == 302 and "/dashboard" in response.headers["Location"])
+
+    print("\n-- logging in before confirming --")
+    unconfirmed = webapp.app.test_client()
+    unconfirmed.post("/signup",
+                     data={"email": "pending@company.com", "password": "notyetconfirmed", "plan": "free"})
+    unconfirmed.get("/logout")
+    response = unconfirmed.post("/login",
+                                data={"email": "pending@company.com", "password": "notyetconfirmed"})
+    check("unconfirmed login is sent to the code form",
+          response.status_code == 302 and "/verify" in response.headers["Location"],
+          response.headers.get("Location"))
+    check("unconfirmed account still can't reach the dashboard",
+          unconfirmed.get("/dashboard").status_code == 302)
 
     print("\n-- gmail connect without google credentials configured --")
     for variable in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"):
@@ -253,6 +332,10 @@ def seed_demo_account() -> None:
     else:
         user_id = user["id"]
         print(f"Demo account already existed: {email}")
+
+    # There's no real inbox behind demo@yums.ai to receive a code, so confirm
+    # it directly. Real signups always go through the emailed code.
+    database.mark_verified(user_id)
 
     database.create_run(user_id, SAMPLE_RESULTS)
     print("Added a sample report.\n")

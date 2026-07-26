@@ -158,6 +158,7 @@ On the first run, a browser window opens for Google OAuth login and consent. The
 |---|---|
 | `/` | Landing page and plan comparison. |
 | `/signup` | Create an account and choose a plan. |
+| `/verify` | Enter the 6-digit code emailed at signup. The account is unusable until this passes. |
 | `/dashboard` | Connect or disconnect Gmail, run an analysis, browse past reports. |
 | `/upgrade` | Switch plans, reached from the Upgrade button beside the plan name. |
 | `/results/<id>` | A saved report, split into Actions Needed and Notices. |
@@ -201,6 +202,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 | `app.py` | Web platform entry point. Flask routes, sessions, and login handling. |
 | `gmail_oauth.py` | Web OAuth2 flow and per-user token refresh. |
 | `database.py` | SQLite schema and queries. |
+| `mailer.py` | Sends signup confirmation codes over SMTP. |
 | `plans.py` | Plan definitions and per-analysis email limits. |
 | `templates/` | Jinja templates (`base`, `index`, `signup`, `login`, `dashboard`, `results`). |
 | `static/style.css` | Styling for the web platform. |
@@ -224,6 +226,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 - `.env`, `credentials.json`, `token.json`, and `yums.db` contain sensitive data and are excluded via `.gitignore`. These files should never be committed to version control.
 - Email subject lines, sender addresses, and body content are transmitted to OpenAI's API for classification. This tool should not be used on inboxes containing content that should not be shared with a third-party API provider.
 - Passwords are stored as salted hashes via Werkzeug's `generate_password_hash`. The plaintext password is never written to disk.
+- Signup requires confirming the email address with a 6-digit code, so an account cannot be created for an inbox the person does not control. Codes come from `secrets` (not `random`), expire after 15 minutes, and are wiped once used. Five wrong guesses locks the code, which is what stops all one million combinations from being tried.
 - Saved reports deliberately store only the sender, subject, date, category, and summary. Email **bodies are discarded** after classification rather than kept in the database.
 - Reports are scoped to their owner at the query level (`WHERE id = ? AND user_id = ?`), so changing the number in a `/results/<id>` URL cannot expose another account's report.
 - Session cookies are `HttpOnly` and `SameSite=Lax`, which keeps another site from making a logged-in browser POST to `/analyze`.
@@ -235,7 +238,9 @@ The web platform is a working implementation, not a hardened deployment. At mini
 - **Gmail tokens are stored unencrypted** in the SQLite database. A copy of `yums.db` grants read access to every connected inbox. These should be encrypted at rest, ideally with a key held outside the database.
 - **Serve over HTTPS** behind a real WSGI server (gunicorn, waitress). `python app.py` starts Flask's development server, which is single-threaded and not built for real traffic. Then remove `OAUTHLIB_INSECURE_TRANSPORT` and set `SESSION_COOKIE_SECURE = True`.
 - **Analysis runs synchronously** inside the request. At one OpenAI call per email, a 100-email Business run can take a couple of minutes and will hit most hosting platforms' request timeouts. This wants a background job queue.
-- **No rate limiting or login throttling** exists, so nothing slows down repeated password guesses or someone hammering the analyze button.
+- **No rate limiting or login throttling** exists, so nothing slows down repeated password guesses or someone hammering the analyze button. Confirmation codes are the exception — those are capped at five attempts.
+- **Configure SMTP.** With `SMTP_HOST`/`SMTP_USERNAME`/`SMTP_PASSWORD` unset, confirmation codes are printed to the server console instead of emailed. That is a convenience for local development; in production it means anyone who can read the logs can finish someone else's signup, and it defeats the point of confirming the address at all.
+- **Confirmation codes are stored in plain text** in the database, alongside a 15-minute expiry. Hashing them would be better if the database is ever exposed.
 - **Plans are not enforced by payment.** Anyone can pick Business at signup for free until real billing is wired in.
 
 ---
@@ -265,6 +270,12 @@ Google occasionally returns extra granted scopes. Set `OAUTHLIB_RELAX_TOKEN_SCOP
 
 **`GOOGLE_CLIENT_ID and/or GOOGLE_CLIENT_SECRET are missing`**
 The web platform uses a Web application OAuth client configured in `.env`, not the CLI's `credentials.json`. See step 4a.
+
+**No confirmation email arrives at signup**
+If `SMTP_HOST`, `SMTP_USERNAME`, or `SMTP_PASSWORD` is unset in `.env`, the code is printed in the terminal running `app.py` rather than emailed — look there. If SMTP *is* configured and mail still fails, the console shows the SMTP error and the code, so signup is never blocked. With Gmail, `SMTP_PASSWORD` must be an [App Password](https://myaccount.google.com/apppasswords); a normal account password is rejected.
+
+**"Too many incorrect codes"**
+Five wrong guesses locks that code on purpose. Click **Send me a new code** — that resets the counter and issues a fresh one.
 
 **"This Gmail connection is no longer valid"**
 The stored token was revoked (from the user's Google account settings) or expired without a refresh token. Click **Disconnect Gmail**, then connect again.
