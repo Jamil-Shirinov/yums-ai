@@ -171,6 +171,28 @@ a { color: var(--accent-dark); }
 
 .btn-tiny { padding: 0.15rem 0.7rem; font-size: 0.75rem; }
 
+/* Destructive actions. Outlined by default so a delete button doesn't shout
+   louder than the thing you actually came to the page for, then solid red on
+   hover once you've reached for it. */
+.btn-danger {
+  background: transparent;
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.btn-danger:hover {
+  background: var(--bad);
+  color: #fff;
+}
+
+/* Solid from the start, for the final "yes I'm sure" button. */
+.btn-danger-solid {
+  background: var(--bad);
+  color: #fff;
+}
+
+.btn-danger-solid:hover { background: #991b1b; }
+
 /* --- Cards -------------------------------------------------- */
 
 .card {

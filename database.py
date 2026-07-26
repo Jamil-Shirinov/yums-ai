@@ -433,6 +433,24 @@ def create_completed_run(user_id: int, summaries: list[EmailSummary]) -> int:
     return run_id
 
 
+def delete_run(run_id: int, user_id: int) -> bool:
+    """Delete one report for good.
+
+    The user_id is in the WHERE clause for the same reason it is in
+    get_run(): without it, anyone could delete anyone else's report by
+    changing the number in the URL.
+    """
+
+    conn = get_connection()
+    cursor = conn.execute(
+        "DELETE FROM runs WHERE id = ? AND user_id = ?", (run_id, user_id)
+    )
+    conn.commit()
+    deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
+
+
 def get_active_run(user_id: int):
     """Return the id of this account's in-flight run, if there is one.
 

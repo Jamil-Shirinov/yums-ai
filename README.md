@@ -168,6 +168,7 @@ On the first run, a browser window opens for Google OAuth login and consent. The
 | `/results/<id>` | A saved report, split into Actions Needed and Notices. Doubles as the live progress page while a run is going. |
 | `/results/<id>/stop` | Stops a running analysis, keeping whatever it has already classified. |
 | `/results/<id>/download` | Downloads the report as `analysis-<date>-<timestamp>.json`. |
+| `/results/<id>/delete` | Deletes a report, after a confirmation page. |
 
 Plans are defined in `plans.py` and control how many unread emails one analysis covers (Free 5, Pro 25, Business 100). Editing that file is all it takes to change the tiers.
 

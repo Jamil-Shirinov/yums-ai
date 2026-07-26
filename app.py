@@ -574,6 +574,39 @@ def stop_analysis(run_id: int):
     return redirect(url_for("results", run_id=run_id))
 
 
+@app.route("/results/<int:run_id>/delete", methods=["GET", "POST"])
+@login_required
+def delete_results(run_id: int):
+    """Delete a report, asking first.
+
+    GET shows the "are you sure?" page and POST does the deleting, so the
+    confirmation can't be skipped and nothing is destroyed by following a
+    link. Being a separate page rather than a JavaScript confirm() means the
+    prompt still appears with scripting turned off.
+    """
+
+    user = current_user()
+    run = database.get_run(run_id, user["id"])
+
+    if run is None:
+        flash("That report doesn't exist.", "error")
+        return redirect(url_for("dashboard"))
+
+    # Deleting the row out from under a working thread would leave it running
+    # with nowhere to write - and free the account up to start another one.
+    if run["status"] in ("running", "cancelling"):
+        flash("Stop this analysis before deleting it.", "error")
+        return redirect(url_for("results", run_id=run_id))
+
+    if request.method == "POST":
+        database.delete_run(run_id, user["id"])
+        flash("Report deleted.", "info")
+        return redirect(url_for("dashboard"))
+
+    actions = [r for r in run["results"] if r["category"] == "action"]
+    return render_template("confirm_delete.html", run=run, action_count=len(actions))
+
+
 @app.route("/results/<int:run_id>/download")
 @login_required
 def download_results(run_id: int):

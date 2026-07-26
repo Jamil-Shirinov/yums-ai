@@ -340,8 +340,12 @@ def run_checks() -> int:
           response.headers.get("Location"))
 
     print("\n-- stopping an analysis --")
+    # Anchored on the form's action rather than the button's wording, which
+    # is the bit that's allowed to change.
+    stop_url = f"/results/{pending_id}/stop".encode()
+
     response = client.get(f"/results/{pending_id}")
-    check("progress page offers a stop button", b"Stop this analysis" in response.data)
+    check("progress page offers a stop button", stop_url in response.data)
 
     response = client.post(f"/results/{pending_id}/stop")
     check("stop redirects back to the report",
@@ -353,7 +357,7 @@ def run_checks() -> int:
 
     response = client.get(f"/results/{pending_id}")
     check("progress page says it's stopping", b"Stopping" in response.data)
-    check("stop button is gone once requested", b"Stop this analysis" not in response.data)
+    check("stop button is gone once requested", stop_url not in response.data)
     check("it keeps refreshing until the worker notices",
           b'http-equiv="refresh"' in response.data)
 
@@ -367,7 +371,10 @@ def run_checks() -> int:
     response = client.get(f"/results/{pending_id}")
     check("stopped run shows the partial results",
           b"sign your benefits form" in response.data)
-    check("and says it was stopped early", b"stopped this analysis early" in response.data)
+    # Matched loosely on purpose - this is checking the banner is there, not
+    # policing its exact wording.
+    banner = response.data.lower()
+    check("and says it was stopped early", b"stopped" in banner and b"early" in banner)
 
     response = client.post(f"/results/{pending_id}/stop", follow_redirects=True)
     check("stopping an already-finished run says so",
@@ -414,6 +421,49 @@ def run_checks() -> int:
     response = other_download.get(f"/results/{run_id}/download", follow_redirects=True)
     check("one account can't download another's report",
           b"benefits form" not in response.data)
+
+    print("\n-- deleting a report --")
+    doomed_id = database.create_completed_run(user["id"], SAMPLE_RESULTS)
+
+    response = client.get(f"/results/{doomed_id}")
+    check("delete button sits next to download",
+          b'class="btn btn-danger"' in response.data
+          and f'/results/{doomed_id}/delete'.encode() in response.data)
+
+    response = client.get(f"/results/{doomed_id}/delete")
+    check("delete asks first", response.status_code == 200 and b"Are you sure?" in response.data)
+    check("confirmation says which report it is",
+          b"3 emails" in response.data and b"2 needing action" in response.data)
+    check("asking did NOT delete anything",
+          database.get_run(doomed_id, user["id"]) is not None)
+
+    response = client.post(f"/results/{doomed_id}/delete")
+    check("confirming deletes and returns to the dashboard",
+          response.status_code == 302 and "/dashboard" in response.headers["Location"])
+    check("the report is really gone", database.get_run(doomed_id, user["id"]) is None)
+    check("it left the history too",
+          doomed_id not in [r["id"] for r in database.list_runs(user["id"], limit=50)])
+
+    response = client.get(f"/results/{doomed_id}", follow_redirects=True)
+    check("visiting a deleted report says it doesn't exist",
+          b"doesn&#39;t exist" in response.data)
+
+    print("\n-- delete is guarded --")
+    busy_id = database.create_pending_run(user["id"])
+    response = client.get(f"/results/{busy_id}/delete", follow_redirects=True)
+    check("a running analysis can't be deleted",
+          b"Stop this analysis before deleting" in response.data)
+    check("and it survives the attempt", database.get_run(busy_id, user["id"]) is not None)
+    database.fail_run(busy_id, "cleanup")
+
+    victim_id = database.create_completed_run(user["id"], SAMPLE_RESULTS)
+    intruder = webapp.app.test_client()
+    signup_and_confirm(intruder, database, "thief@company.com", "hunter2hunter2", "free")
+    response = intruder.post(f"/results/{victim_id}/delete", follow_redirects=True)
+    check("one account can't delete another's report",
+          database.get_run(victim_id, user["id"]) is not None)
+    check("and is told it doesn't exist", b"doesn&#39;t exist" in response.data)
+    database.delete_run(victim_id, user["id"])
 
     pending_id = database.create_pending_run(user["id"])
     database.fail_run(pending_id, "Ran out of biscuits.")

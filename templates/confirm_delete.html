@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Delete this report? - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+  <h1>Are you sure?</h1>
+  <p class="form-sub">
+    This report will be deleted permanently. It can't be undone, and Yums
+    would have to read your inbox again to rebuild it.
+  </p>
+
+  {# Spell out which report this is, so nobody deletes the wrong one. #}
+  <dl class="detail-list">
+    <dt>Analyzed</dt>
+    <dd>{{ run['created_at'].replace('T', ' ') }}</dd>
+
+    <dt>Contains</dt>
+    <dd>
+      {{ run['results'] | length }} email{% if run['results'] | length != 1 %}s{% endif %},
+      {{ action_count }} needing action
+    </dd>
+  </dl>
+
+  <form method="post" action="{{ url_for('delete_results', run_id=run['id']) }}">
+    <button type="submit" class="btn btn-danger-solid btn-block">Yes, delete this report</button>
+  </form>
+
+  <p class="form-footer">
+    <a href="{{ url_for('results', run_id=run['id']) }}">No, keep it</a>
+  </p>
+</div>
+
+{% endblock %}
