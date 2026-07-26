@@ -175,13 +175,21 @@ python main.py --mark-as-read          # currently a no-op; see note below
 
 `--mark-as-read` is defined but intentionally non-functional. Because the project only requests the `gmail.readonly` scope, it cannot modify message state under any circumstances. Enabling this would require changing `SCOPES` in `gmail_client.py` to `gmail.modify`, deleting the cached `token.json` to force re-consent, and implementing a call to `service.users().messages().modify(...)` in `main.py`.
 
-To validate classification behavior without connecting to a live inbox:
+### Testing
+
+Neither test script needs Gmail, and only `test_classifier.py` costs anything.
 
 ```bash
-python test_classifier.py
+python test_web.py            # exercise every web route (no Gmail, no OpenAI, free)
+python test_web.py --demo     # add a demo account + sample report to yums.db
+python test_classifier.py     # run the classifier on sample emails (uses OpenAI credit)
 ```
 
-This runs the classifier against a set of hardcoded sample emails and prints the resulting categorization.
+`test_web.py` drives the real routes, templates, and database queries through Flask's test client. It covers signup validation, password hashing, login, access control, report rendering, and the fact that one account cannot open another account's report. It runs against a temporary database, so `yums.db` is left untouched.
+
+`test_web.py --demo` is the one that writes to `yums.db`: it creates `demo@yums.ai` / `demopassword` on the Business plan with a sample report attached, so the dashboard and report pages can be viewed in a browser before any Gmail setup is done.
+
+`test_classifier.py` runs the classifier against a set of hardcoded sample emails and prints the resulting categorization.
 
 ---
 
@@ -199,6 +207,7 @@ This runs the classifier against a set of hardcoded sample emails and prints the
 | `gmail_client.py` | Gmail OAuth2 authentication (desktop) and unread message retrieval. |
 | `classifier.py` | OpenAI API integration for classification and summarization. |
 | `models.py` | Shared data structures. |
+| `test_web.py` | Web platform test harness, plus a `--demo` account seeder. |
 | `test_classifier.py` | Classifier test harness using sample data. |
 | `.env.example` | Template for required environment variables. |
 | `credentials.json` | Google OAuth client credentials for the CLI (user-generated, not included). |
