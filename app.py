@@ -21,6 +21,7 @@ from openai import OpenAI
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import database
+import encryption
 import gmail_oauth
 import mailer
 from classifier import classify_emails
@@ -47,6 +48,11 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-only-secret-change-me")
 # (Lax still allows the top-level redirect back from Google's consent screen.)
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_HTTPONLY"] = True
+
+# Checked before anything touches the database, so a missing key is an
+# obvious error the moment you start the app rather than a mystery the first
+# time somebody connects their Gmail.
+encryption.ensure_key()
 
 database.init_db()
 
@@ -437,7 +443,10 @@ def analyze():
     limit = get_plan(user["plan"])["email_limit"]
 
     try:
-        service, refreshed_token = gmail_oauth.build_service(user["gmail_token"])
+        # The row only tells us a connection exists; this decrypts it.
+        service, refreshed_token = gmail_oauth.build_service(
+            database.get_gmail_token(user["id"])
+        )
         if refreshed_token:
             database.save_gmail_token(user["id"], refreshed_token)
 

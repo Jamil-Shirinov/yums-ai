@@ -202,6 +202,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 | `app.py` | Web platform entry point. Flask routes, sessions, and login handling. |
 | `gmail_oauth.py` | Web OAuth2 flow and per-user token refresh. |
 | `database.py` | SQLite schema and queries. |
+| `encryption.py` | Encrypts and decrypts stored Gmail tokens. |
 | `mailer.py` | Sends signup confirmation codes over SMTP. |
 | `plans.py` | Plan definitions and per-analysis email limits. |
 | `templates/` | Jinja templates (`base`, `index`, `signup`, `login`, `dashboard`, `results`). |
@@ -227,6 +228,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 - Email subject lines, sender addresses, and body content are transmitted to OpenAI's API for classification. This tool should not be used on inboxes containing content that should not be shared with a third-party API provider.
 - Passwords are stored as salted hashes via Werkzeug's `generate_password_hash`. The plaintext password is never written to disk.
 - Signup requires confirming the email address with a 6-digit code, so an account cannot be created for an inbox the person does not control. Codes come from `secrets` (not `random`), expire after 15 minutes, and are wiped once used. Five wrong guesses locks the code, which is what stops all one million combinations from being tried.
+- Gmail tokens are **encrypted before being written to the database**, using Fernet (AES-CBC with an HMAC) from the `cryptography` package. The key lives in `YUMS_ENCRYPTION_KEY` in `.env`, never in the database, so a copy of `yums.db` on its own cannot be used to reach anyone's inbox. Tokens written before this existed are encrypted in place the next time the app starts.
 - Saved reports deliberately store only the sender, subject, date, category, and summary. Email **bodies are discarded** after classification rather than kept in the database.
 - Reports are scoped to their owner at the query level (`WHERE id = ? AND user_id = ?`), so changing the number in a `/results/<id>` URL cannot expose another account's report.
 - Session cookies are `HttpOnly` and `SameSite=Lax`, which keeps another site from making a logged-in browser POST to `/analyze`.
@@ -235,7 +237,6 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 
 The web platform is a working implementation, not a hardened deployment. At minimum, the following would need addressing first:
 
-- **Gmail tokens are stored unencrypted** in the SQLite database. A copy of `yums.db` grants read access to every connected inbox. These should be encrypted at rest, ideally with a key held outside the database.
 - **Serve over HTTPS** behind a real WSGI server (gunicorn, waitress). `python app.py` starts Flask's development server, which is single-threaded and not built for real traffic. Then remove `OAUTHLIB_INSECURE_TRANSPORT` and set `SESSION_COOKIE_SECURE = True`.
 - **Analysis runs synchronously** inside the request. At one OpenAI call per email, a 100-email Business run can take a couple of minutes and will hit most hosting platforms' request timeouts. This wants a background job queue.
 - **No rate limiting or login throttling** exists, so nothing slows down repeated password guesses or someone hammering the analyze button. Confirmation codes are the exception — those are capped at five attempts.
@@ -270,6 +271,12 @@ Google occasionally returns extra granted scopes. Set `OAUTHLIB_RELAX_TOKEN_SCOP
 
 **`GOOGLE_CLIENT_ID and/or GOOGLE_CLIENT_SECRET are missing`**
 The web platform uses a Web application OAuth client configured in `.env`, not the CLI's `credentials.json`. See step 4a.
+
+**`YUMS_ENCRYPTION_KEY is missing from .env`**
+The app refuses to start without it, because stored Gmail tokens are encrypted and unreadable otherwise. The error message includes a freshly generated key to paste into `.env`. Restart afterwards — the reloader watches `.py` files, not `.env`.
+
+**"This Gmail connection can't be read back"**
+`YUMS_ENCRYPTION_KEY` has changed since that token was saved. There is no way to recover it: click **Disconnect Gmail**, then connect again. Back the key up somewhere alongside your other secrets.
 
 **No confirmation email arrives at signup**
 If `SMTP_HOST`, `SMTP_USERNAME`, or `SMTP_PASSWORD` is unset in `.env`, the code is printed in the terminal running `app.py` rather than emailed — look there. If SMTP *is* configured and mail still fails, the console shows the SMTP error and the code, so signup is never blocked. With Gmail, `SMTP_PASSWORD` must be an [App Password](https://myaccount.google.com/apppasswords); a normal account password is rejected.

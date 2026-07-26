@@ -55,8 +55,7 @@ def _build_message(to_address: str, code: str, sender: str) -> EmailMessage:
         f"Your confirmation code is: {code}\n\n"
         f"Enter it on the confirmation page to finish setting up your account.\n"
         f"The code expires in 15 minutes.\n\n"
-        f"If you didn't sign up for Yums, you can ignore this email - "
-        f"nobody can use the address without this code.\n"
+        f"If you didn't sign up for Yums, you can ignore this email.\n"
     )
     return message
 

@@ -11,6 +11,7 @@ import os
 import sqlite3
 from datetime import datetime
 
+import encryption
 from models import EmailSummary
 
 DB_FILE = os.getenv("YUMS_DB_FILE", "yums.db")
@@ -77,6 +78,24 @@ def init_db() -> None:
         conn.execute(
             "ALTER TABLE users ADD COLUMN verification_attempts INTEGER NOT NULL DEFAULT 0"
         )
+
+    # Tokens stored before encryption existed are raw JSON sitting in the
+    # file. Scramble them in place so nothing readable is left behind. The
+    # LIKE picks out exactly those - encrypted values are base64 and never
+    # start with a brace.
+    plaintext_tokens = conn.execute(
+        "SELECT id, gmail_token FROM users "
+        "WHERE gmail_token IS NOT NULL AND gmail_token LIKE '{%'"
+    ).fetchall()
+
+    for row in plaintext_tokens:
+        conn.execute(
+            "UPDATE users SET gmail_token = ? WHERE id = ?",
+            (encryption.encrypt(row["gmail_token"]), row["id"]),
+        )
+
+    if plaintext_tokens:
+        print(f"[database] encrypted {len(plaintext_tokens)} stored Gmail token(s)")
 
     # One row per "Analyze my inbox" click, so the dashboard can show history
     # and so refreshing the results page doesn't re-run (and re-bill) anything.
@@ -191,18 +210,40 @@ def save_gmail_token(user_id: int, token_json: str, gmail_address: str = None) -
 
     gmail_address is optional because we also call this after a silent token
     refresh, when the address hasn't changed and we don't want to clear it.
+
+    The token is encrypted on the way in - it never hits the disk readable.
     """
+
+    encrypted_token = encryption.encrypt(token_json)
 
     conn = get_connection()
     if gmail_address is None:
-        conn.execute("UPDATE users SET gmail_token = ? WHERE id = ?", (token_json, user_id))
+        conn.execute("UPDATE users SET gmail_token = ? WHERE id = ?", (encrypted_token, user_id))
     else:
         conn.execute(
             "UPDATE users SET gmail_token = ?, gmail_address = ? WHERE id = ?",
-            (token_json, gmail_address, user_id),
+            (encrypted_token, gmail_address, user_id),
         )
     conn.commit()
     conn.close()
+
+
+def get_gmail_token(user_id: int):
+    """Read an account's Gmail token back, decrypted and ready to use.
+
+    Returns None if there's no connection. Everywhere else in the app checks
+    user["gmail_token"] purely for truthiness ("is Gmail connected?"), which
+    still works on the encrypted value - this is the only place that needs
+    the real thing.
+    """
+
+    conn = get_connection()
+    row = conn.execute("SELECT gmail_token FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+
+    if row is None or not row["gmail_token"]:
+        return None
+    return encryption.decrypt(row["gmail_token"])
 
 
 def clear_gmail_token(user_id: int) -> None:

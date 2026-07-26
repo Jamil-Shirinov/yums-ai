@@ -105,6 +105,10 @@ def run_checks() -> int:
     os.environ["YUMS_DB_FILE"] = temp_db
     os.environ.setdefault("FLASK_SECRET_KEY", "test-secret")
 
+    # A throwaway encryption key, so the checks never touch the real one.
+    import encryption
+    os.environ["YUMS_ENCRYPTION_KEY"] = encryption.generate_key()
+
     import app as webapp
     import database
 
@@ -298,6 +302,54 @@ def run_checks() -> int:
     check("unconfirmed account still can't reach the dashboard",
           unconfirmed.get("/dashboard").status_code == 302)
 
+    print("\n-- gmail tokens are encrypted at rest --")
+    fake_token = '{"token": "secret-access-token", "refresh_token": "secret-refresh-token"}'
+    database.save_gmail_token(user["id"], fake_token, "boss@gmail.com")
+
+    raw = database.get_connection().execute(
+        "SELECT gmail_token FROM users WHERE id = ?", (user["id"],)
+    ).fetchone()["gmail_token"]
+
+    check("stored value is not the token itself", raw != fake_token)
+    check("no readable secret left in the database",
+          "secret-access-token" not in raw and "secret-refresh-token" not in raw)
+    check("stored value doesn't even look like json", not raw.startswith("{"))
+    check("it decrypts back to exactly what went in",
+          database.get_gmail_token(user["id"]) == fake_token)
+    check("dashboard still sees the account as connected",
+          b"Disconnect Gmail" in client.get("/dashboard").data)
+
+    # A different key must not be able to read it.
+    good_key = os.environ["YUMS_ENCRYPTION_KEY"]
+    os.environ["YUMS_ENCRYPTION_KEY"] = encryption.generate_key()
+    try:
+        database.get_gmail_token(user["id"])
+        check("wrong key is rejected", False, "it decrypted anyway!")
+    except RuntimeError as error:
+        check("wrong key is rejected with a reconnect message",
+              "reconnect" in str(error).lower())
+    os.environ["YUMS_ENCRYPTION_KEY"] = good_key
+    check("right key still works after that",
+          database.get_gmail_token(user["id"]) == fake_token)
+
+    # Tokens written before encryption existed must still be readable, and
+    # get encrypted the next time the app starts.
+    conn = database.get_connection()
+    conn.execute("UPDATE users SET gmail_token = ? WHERE id = ?", (fake_token, user["id"]))
+    conn.commit()
+    conn.close()
+    check("a legacy plain-text token is still readable",
+          database.get_gmail_token(user["id"]) == fake_token)
+    database.init_db()
+    raw = database.get_connection().execute(
+        "SELECT gmail_token FROM users WHERE id = ?", (user["id"],)
+    ).fetchone()["gmail_token"]
+    check("startup encrypts legacy tokens in place", not raw.startswith("{"))
+    check("and they still decrypt afterwards",
+          database.get_gmail_token(user["id"]) == fake_token)
+
+    database.clear_gmail_token(user["id"])
+
     print("\n-- gmail connect without google credentials configured --")
     for variable in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"):
         os.environ.pop(variable, None)
@@ -315,11 +367,15 @@ def seed_demo_account() -> None:
     dashboard and report pages can be looked at in a browser without
     connecting Gmail or paying for a classification run."""
 
+    from dotenv import load_dotenv
+
+    # app.py normally loads .env and checks the key on startup. We're running
+    # without it, and encrypting stored tokens needs YUMS_ENCRYPTION_KEY.
+    load_dotenv()
+
     import database
     from werkzeug.security import generate_password_hash
 
-    # app.py normally does this on startup. We're running without it, so if
-    # the server has never been started there'd be no tables yet.
     database.init_db()
 
     email = "demo@yums.ai"
