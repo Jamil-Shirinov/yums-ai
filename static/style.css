@@ -138,7 +138,7 @@ a { color: var(--accent-dark); }
   font-family: inherit;
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
 .btn:hover { background: var(--accent-dark); }
@@ -155,6 +155,21 @@ a { color: var(--accent-dark); }
 }
 
 .btn-quiet:hover { background: var(--card); color: var(--ink); }
+
+/* Outlined orange, filling in on hover. Both rules have to sit after
+   .btn:hover, or that rule's background would win on a tie. */
+.btn-outline {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.btn-outline:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.btn-tiny { padding: 0.15rem 0.7rem; font-size: 0.75rem; }
 
 /* --- Cards -------------------------------------------------- */
 
@@ -407,6 +422,17 @@ input:focus {
   vertical-align: middle;
 }
 
+.plan-current-tag {
+  display: inline-block;
+  background: var(--accent-wash);
+  color: var(--accent-dark);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 /* --- Dashboard ---------------------------------------------- */
 
 /* Two equal columns on top, so the analyze card and the account card each
@@ -434,6 +460,14 @@ input:focus {
 
 .detail-list dt { color: var(--ink-faint); }
 .detail-list dd { margin: 0; }
+
+/* Keeps the plan name and its Upgrade button on one line, vertically centred. */
+.plan-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
 
 .status {
   display: inline-block;

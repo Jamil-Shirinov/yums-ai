@@ -104,6 +104,19 @@ def get_user_by_id(user_id: int):
     return row
 
 
+def update_plan(user_id: int, plan: str) -> None:
+    """Move an account onto a different plan.
+
+    Because plans are simulated, this takes effect the moment it's called.
+    Once real billing exists, this should only run after a successful payment.
+    """
+
+    conn = get_connection()
+    conn.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, user_id))
+    conn.commit()
+    conn.close()
+
+
 def save_gmail_token(user_id: int, token_json: str, gmail_address: str = None) -> None:
     """Store (or update) the Gmail OAuth token for an account.
 

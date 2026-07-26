@@ -39,7 +39,10 @@
       <dd>{{ user['email'] }}</dd>
 
       <dt>Plan</dt>
-      <dd>{{ plan['name'] }}</dd>
+      <dd class="plan-line">
+        {{ plan['name'] }}
+        <a class="btn btn-outline btn-tiny" href="{{ url_for('upgrade') }}">Upgrade</a>
+      </dd>
 
       <dt>Per analysis</dt>
       <dd>{{ plan['email_limit'] }} unread emails</dd>

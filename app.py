@@ -191,6 +191,39 @@ def dashboard():
         history=database.list_runs(user["id"]),
     )
 
+
+@app.route("/upgrade", methods=["GET", "POST"])
+@login_required
+def upgrade():
+    """Change the account's plan.
+
+    Plans are simulated, so this switch is immediate and free. Once real
+    billing is wired in, the POST branch is where a successful payment would
+    have to happen before database.update_plan() gets called.
+    """
+
+    user = current_user()
+
+    if request.method == "POST":
+        new_plan = request.form.get("plan", "")
+
+        if new_plan not in PLANS:
+            flash("Please choose one of the available plans.", "error")
+        elif new_plan == user["plan"]:
+            flash("That's already your current plan.", "info")
+            return redirect(url_for("dashboard"))
+        else:
+            database.update_plan(user["id"], new_plan)
+            plan = get_plan(new_plan)
+            flash(
+                f"You're now on the {plan['name']} plan - "
+                f"{plan['email_limit']} emails per analysis.",
+                "success",
+            )
+            return redirect(url_for("dashboard"))
+
+    return render_template("upgrade.html", current_plan_id=user["plan"])
+
 # --------------------
 # Connecting Gmail
 # --------------------

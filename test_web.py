@@ -117,6 +117,9 @@ def run_checks() -> int:
     response = client.post("/analyze")
     check("guests bounced from analyze",
           response.status_code == 302 and "/login" in response.headers["Location"])
+    response = client.get("/upgrade")
+    check("guests bounced from upgrade",
+          response.status_code == 302 and "/login" in response.headers["Location"])
 
     print("\n-- signup rejects bad input --")
     response = client.post("/signup", data={"email": "notanemail", "password": "longenough1", "plan": "free"})
@@ -148,8 +151,38 @@ def run_checks() -> int:
     check("asks the user to connect gmail", b"Connect Gmail" in response.data)
     check("shows the Pro limit of 25", b"25 unread emails" in response.data)
     check("plan shown by name only, without a price", b"$2.99" not in response.data)
+    check("upgrade button sits next to the plan",
+          b">Upgrade</a>" in response.data and b'href="/upgrade"' in response.data)
     response = client.post("/analyze", follow_redirects=True)
     check("analyze refuses without gmail", b"Connect your Gmail account first" in response.data)
+
+    print("\n-- changing plan --")
+    response = client.get("/upgrade")
+    check("upgrade page loads", response.status_code == 200, response.status_code)
+    check("current plan is preselected",
+          b'value="pro"\n                 checked' in response.data
+          or b"Current plan" in response.data)
+
+    response = client.post("/upgrade", data={"plan": "gold"})
+    check("made-up plan rejected", b"available plans" in response.data)
+    check("plan unchanged after a bad choice",
+          database.get_user_by_id(user["id"])["plan"] == "pro")
+
+    response = client.post("/upgrade", data={"plan": "pro"}, follow_redirects=True)
+    check("picking the current plan says so", b"already your current plan" in response.data)
+
+    response = client.post("/upgrade", data={"plan": "business_annual"})
+    check("upgrade redirects to dashboard",
+          response.status_code == 302 and "/dashboard" in response.headers["Location"])
+    check("plan actually changed",
+          database.get_user_by_id(user["id"])["plan"] == "business_annual")
+    response = client.get("/dashboard")
+    check("dashboard shows the new tier and not the old one",
+          b"Business" in response.data and b"Pro" not in response.data)
+    check("new limit of 100 applied", b"100 unread emails" in response.data)
+
+    # Put it back, so the rest of the checks run against the Pro account.
+    database.update_plan(user["id"], "pro")
 
     print("\n-- reports --")
     run_id = database.create_run(user["id"], SAMPLE_RESULTS)
