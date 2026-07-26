@@ -221,8 +221,8 @@ def run_checks() -> int:
     check("asks the user to connect gmail", b"Connect Gmail" in response.data)
     check("shows the Pro limit of 25", b"25 unread emails" in response.data)
     check("plan shown by name only, without a price", b"$2.99" not in response.data)
-    check("upgrade button sits next to the plan",
-          b">Upgrade</a>" in response.data and b'href="/upgrade"' in response.data)
+    check("change plan button sits next to the plan",
+          b">Change Plan</a>" in response.data and b'href="/upgrade"' in response.data)
     response = client.post("/analyze", follow_redirects=True)
     check("analyze refuses without gmail", b"Connect your Gmail account first" in response.data)
 

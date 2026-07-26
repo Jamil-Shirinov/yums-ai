@@ -162,7 +162,7 @@ On the first run, a browser window opens for Google OAuth login and consent. The
 | `/signup` | Create an account and choose a plan. |
 | `/verify` | Enter the 6-digit code emailed at signup. The account is unusable until this passes. |
 | `/dashboard` | Connect or disconnect Gmail, run an analysis, browse past reports. |
-| `/upgrade` | Switch plans, reached from the Upgrade button beside the plan name. |
+| `/upgrade` | Switch plans, reached from the Change Plan button beside the plan name. |
 | `/results/<id>` | A saved report, split into Actions Needed and Notices. |
 
 Plans are defined in `plans.py` and control how many unread emails one analysis covers (Free 5, Pro 25, Business 100). Editing that file is all it takes to change the tiers.
