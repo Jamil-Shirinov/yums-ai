@@ -20,12 +20,16 @@ For each email you are shown, decide whether it belongs in one of two buckets:
  
 When in doubt between the two, prefer "action" - it's safer to flag
 something as needing attention than to let it get missed.
- 
+
+Write the "reason" in the second person, speaking directly to the recipient
+as "you", and make it a complete sentence. For example: "You need to sign
+this before Friday." or "You don't need to do anything here."
+
 Respond ONLY with a JSON object in exactly this shape, no extra text:
 {
   "category": "action" or "notice",
   "summary": "one concise sentence describing what the email is about",
-  "reason": "one short phrase explaining why you chose that category"
+  "reason": "one short sentence, addressed to the recipient as \"you\", explaining why you chose that category"
 }
 """
 

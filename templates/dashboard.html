@@ -8,7 +8,7 @@
 <div class="dash-grid">
 
   {# --- The big button (or a nudge to connect Gmail first) --- #}
-  <section class="card card-primary">
+  <section class="card">
     {% if user['gmail_token'] %}
       <h2>Ready when you are</h2>
       <p class="card-sub">
@@ -39,7 +39,7 @@
       <dd>{{ user['email'] }}</dd>
 
       <dt>Plan</dt>
-      <dd>{{ plan['name'] }} <span class="muted">- {{ plan['price'] }} {{ plan['period'] }}</span></dd>
+      <dd>{{ plan['name'] }}</dd>
 
       <dt>Per analysis</dt>
       <dd>{{ plan['email_limit'] }} unread emails</dd>

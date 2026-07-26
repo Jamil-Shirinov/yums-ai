@@ -22,7 +22,7 @@ import database
 import gmail_oauth
 from classifier import classify_emails
 from gmail_client import fetch_unread_emails
-from plans import DEFAULT_PLAN, PLANS, get_plan
+from plans import DEFAULT_PLAN, PLANS, TIERS, get_plan
 
 load_dotenv()
 
@@ -85,7 +85,7 @@ def inject_globals():
     """Make these available inside every template without passing them in
     to each render_template() call by hand."""
 
-    return {"user": current_user(), "PLANS": PLANS, "get_plan": get_plan}
+    return {"user": current_user(), "PLANS": PLANS, "TIERS": TIERS, "get_plan": get_plan}
 
 
 @app.template_filter("sender_name")

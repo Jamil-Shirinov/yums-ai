@@ -34,10 +34,13 @@
   <h2>Plans</h2>
   <p class="section-sub">Your plan sets how many unread emails one analysis covers.</p>
 
+  {# One card per tier. The annual version, where there is one, sits just
+     above the button as a second way to sign up for the same tier. #}
   <div class="plan-grid">
-    {% for plan_id, plan in PLANS.items() %}
-      <div class="plan-card {% if plan_id == 'pro' %}plan-featured{% endif %}">
-        {% if plan_id == 'pro' %}<span class="plan-badge">Most popular</span>{% endif %}
+    {% for monthly_id, annual_id in TIERS %}
+      {% set plan = PLANS[monthly_id] %}
+      <div class="plan-card {% if monthly_id == 'pro' %}plan-featured{% endif %}">
+        {% if monthly_id == 'pro' %}<span class="plan-badge">Most popular</span>{% endif %}
         <h3>{{ plan['name'] }}</h3>
         <p class="plan-price">{{ plan['price'] }} <span class="plan-period">{{ plan['period'] }}</span></p>
         <p class="plan-blurb">{{ plan['blurb'] }}</p>
@@ -46,7 +49,14 @@
             <li>{{ feature }}</li>
           {% endfor %}
         </ul>
-        <a class="btn btn-block" href="{{ url_for('signup', plan=plan_id) }}">Choose {{ plan['name'] }}</a>
+        {% if annual_id %}
+          {% set annual = PLANS[annual_id] %}
+          <p class="plan-annual">
+            or <a href="{{ url_for('signup', plan=annual_id) }}">{{ annual['price'] }} {{ annual['period'] }}</a>
+            <span class="plan-savings">{{ annual['savings'] }}</span>
+          </p>
+        {% endif %}
+        <a class="btn btn-block" href="{{ url_for('signup', plan=monthly_id) }}">Choose {{ plan['name'] }}</a>
       </div>
     {% endfor %}
   </div>

@@ -87,9 +87,23 @@ a { color: var(--accent-dark); }
 
 .site-footer {
   text-align: center;
-  padding: 2rem 1.5rem 3rem;
+  padding: 2rem 1.5rem 2.5rem;
   color: var(--ink-faint);
   font-size: 0.85rem;
+}
+
+/* The white bar pinned to the very bottom of every page. Its side padding
+   matches the header's, so the copyright lines up under the logo. */
+.site-legal {
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  padding: 1.25rem 2rem;
+}
+
+.site-legal p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
 }
 
 .page-title { font-size: 1.9rem; }
@@ -156,11 +170,6 @@ a { color: var(--accent-dark); }
 .card-sub { color: var(--ink-soft); font-size: 0.95rem; }
 .card-note { color: var(--ink-faint); font-size: 0.85rem; margin: 0.9rem 0 0; }
 
-.card-primary {
-  background: var(--accent-wash);
-  border-color: #fde68a;
-}
-
 /* --- Landing page ------------------------------------------- */
 
 .hero {
@@ -186,8 +195,29 @@ a { color: var(--accent-dark); }
   padding: 1rem 0 3.5rem;
 }
 
+/* Each step is its own card that lifts slightly under the cursor. */
+.step {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.6rem 1.5rem;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.step:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 12px 28px rgba(28, 25, 23, 0.10), 0 2px 6px rgba(28, 25, 23, 0.06);
+}
+
 .step h3 { font-size: 1.05rem; }
 .step p { color: var(--ink-soft); font-size: 0.95rem; margin: 0; }
+
+/* Respect the system setting for people who don't want motion. */
+@media (prefers-reduced-motion: reduce) {
+  .step { transition: none; }
+  .step:hover { transform: none; }
+}
 
 .step-number {
   display: inline-flex;
@@ -264,6 +294,24 @@ a { color: var(--accent-dark); }
   left: 0;
   color: var(--accent);
   font-weight: 700;
+}
+
+/* The "or $29.99 per year" line above each paid plan's button. */
+.plan-annual {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin: 0 0 0.9rem;
+}
+
+.plan-savings {
+  display: inline-block;
+  background: #f0fdf4;
+  color: var(--good);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  margin-left: 0.2rem;
 }
 
 /* --- Forms -------------------------------------------------- */
@@ -348,16 +396,33 @@ input:focus {
 .plan-option-price { font-size: 0.85rem; color: var(--ink-soft); }
 .plan-option-limit { font-size: 0.8rem; color: var(--ink-faint); }
 
+.plan-save-tag {
+  display: inline-block;
+  background: #f0fdf4;
+  color: var(--good);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
 /* --- Dashboard ---------------------------------------------- */
 
+/* Two equal columns on top, so the analyze card and the account card each
+   come out exactly half the width of the full-width card beneath them. */
 .dash-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 1.25rem;
-  align-items: start;
 }
 
 .card-wide { grid-column: 1 / -1; }
+
+/* Too narrow for two side by side - stack them instead. */
+@media (max-width: 700px) {
+  .dash-grid { grid-template-columns: 1fr; }
+}
 
 .detail-list {
   display: grid;
@@ -492,9 +557,8 @@ input:focus {
 
 .email-reason {
   margin: 0.5rem 0 0;
-  font-size: 0.82rem;
-  color: var(--ink-faint);
-  font-style: italic;
+  font-size: 0.9rem;
+  color: var(--ink);
 }
 
 /* --- Small screens ------------------------------------------ */

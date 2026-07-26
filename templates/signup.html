@@ -25,7 +25,10 @@
           <input type="radio" name="plan" value="{{ plan_id }}"
                  {% if plan_id == selected_plan %}checked{% endif %}>
           <span class="plan-option-body">
-            <strong>{{ plan['name'] }}</strong>
+            <strong>
+              {{ plan['name'] }}
+              {% if plan['savings'] %}<span class="plan-save-tag">{{ plan['savings'] }}</span>{% endif %}
+            </strong>
             <span class="plan-option-price">{{ plan['price'] }} {{ plan['period'] }}</span>
             <span class="plan-option-limit">{{ plan['email_limit'] }} emails per analysis</span>
           </span>

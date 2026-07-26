@@ -32,7 +32,7 @@ SAMPLE_RESULTS = [
         ),
         category="action",
         summary="A benefits enrollment form needs your signature by Friday.",
-        reason="asks for a signature by a deadline",
+        reason="You need to sign and return this before Friday.",
     ),
     EmailSummary(
         email=EmailMessage(
@@ -44,7 +44,7 @@ SAMPLE_RESULTS = [
         ),
         category="action",
         summary="A pull request is waiting on your review before it can merge.",
-        reason="review is blocking a merge",
+        reason="You need to review this before it can be merged.",
     ),
     EmailSummary(
         email=EmailMessage(
@@ -58,7 +58,7 @@ SAMPLE_RESULTS = [
         ),
         category="notice",
         summary="Weekly tech newsletter roundup.",
-        reason="purely informational",
+        reason="You don't need to do anything with this one.",
     ),
 ]
 
@@ -100,7 +100,14 @@ def run_checks() -> int:
     response = client.get("/")
     check("landing page loads", response.status_code == 200, response.status_code)
     check("landing page lists plans", b"Business" in response.data and b"Free" in response.data)
+    check("monthly prices shown", b"$2.99" in response.data and b"$7.99" in response.data)
+    check("annual prices shown", b"$29.99" in response.data and b"$85.99" in response.data)
+    check("annual savings shown", b"Save $6" in response.data and b"Save $9" in response.data)
+    check("footer credit links to jshirinov.com",
+          b"Created by" in response.data and b"jshirinov.com" in response.data)
     check("signup page loads", client.get("/signup").status_code == 200)
+    check("annual plans selectable at signup",
+          b'value="pro_annual"' in client.get("/signup").data)
     check("login page loads", client.get("/login").status_code == 200)
 
     print("\n-- pages that need an account --")
@@ -140,6 +147,7 @@ def run_checks() -> int:
     check("dashboard loads", response.status_code == 200, response.status_code)
     check("asks the user to connect gmail", b"Connect Gmail" in response.data)
     check("shows the Pro limit of 25", b"25 unread emails" in response.data)
+    check("plan shown by name only, without a price", b"$2.99" not in response.data)
     response = client.post("/analyze", follow_redirects=True)
     check("analyze refuses without gmail", b"Connect your Gmail account first" in response.data)
 
@@ -151,6 +159,8 @@ def run_checks() -> int:
     check("notice email shown", b"5 stories you might have missed" in response.data)
     check("sender shown as a name", b"Herring Herringson" in response.data)
     check("sender falls back to address", b"news@boring.com" in response.data)
+    check("explanation shown without a 'Why:' label",
+          b"You need to sign and return this" in response.data and b"Why:" not in response.data)
     stored = database.get_run(run_id, user["id"])
     check("email bodies are NOT kept in the database",
           "body" not in stored["results"][0]["email"])
