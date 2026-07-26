@@ -20,12 +20,16 @@ For each email you are shown, decide whether it belongs in one of two buckets:
  
 When in doubt between the two, prefer "action" - it's safer to flag
 something as needing attention than to let it get missed.
- 
+
+Write the "reason" in the second person, speaking directly to the recipient
+as "you", and make it a complete sentence. For example: "You need to sign
+this before Friday." or "You don't need to do anything here."
+
 Respond ONLY with a JSON object in exactly this shape, no extra text:
 {
   "category": "action" or "notice",
   "summary": "one concise sentence describing what the email is about",
-  "reason": "one short phrase explaining why you chose that category"
+  "reason": "one short sentence, addressed to the recipient as \"you\", explaining why you chose that category"
 }
 """
 
@@ -72,6 +76,30 @@ def classify_email(client: OpenAI, email: EmailMessage) -> EmailSummary:
 
 # --------------------
 
-def classify_emails(client: OpenAI, emails: list[EmailMessage]) -> list[EmailSummary]:
-    """Classify a whole batch of emails, one at a time."""
-    return [classify_email(client, email) for email in emails]
+def classify_emails(
+    client: OpenAI,
+    emails: list[EmailMessage],
+    on_progress=None,
+    should_stop=None,
+) -> list[EmailSummary]:
+    """Classify a whole batch of emails, one at a time.
+
+    on_progress, if given, is called with the number finished after each
+    email. The web app uses it to drive its progress bar.
+
+    should_stop, if given, is checked before each email; when it returns True
+    we stop and hand back what we've classified so far rather than throwing
+    the work away. That's how the web app's Stop button takes effect - the
+    worst case is one more email finishing after the click.
+
+    The CLI passes neither and behaves exactly as before.
+    """
+
+    summaries = []
+    for index, email in enumerate(emails, start=1):
+        if should_stop is not None and should_stop():
+            break
+        summaries.append(classify_email(client, email))
+        if on_progress is not None:
+            on_progress(index)
+    return summaries

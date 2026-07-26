@@ -2,7 +2,10 @@
 credentials.json
 token.json
 output/
+yums.db
 __pycache__/
 *.pyc
 .venv/
 venv/
+sampleenv/
+anenv/

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Confirm your email - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+  <h1>Check your inbox</h1>
+  <p class="form-sub">
+    We sent a 6-digit code to <strong>{{ email }}</strong>. Enter it below to
+    confirm the address is yours.
+  </p>
+
+  <form method="post" action="{{ url_for('verify') }}">
+    <label for="code">Confirmation code</label>
+    <input type="text" id="code" name="code" class="code-input"
+           inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+           autocomplete="one-time-code" required autofocus
+           placeholder="000000">
+
+    <button type="submit" class="btn btn-block">Confirm my email</button>
+  </form>
+
+  <form method="post" action="{{ url_for('resend_code') }}" class="resend-form">
+    <button type="submit" class="btn btn-quiet btn-block">Send me a new code</button>
+  </form>
+
+  <p class="form-footer">
+    Codes expire after 15 minutes. Wrong address?
+    <a href="{{ url_for('signup') }}">Start over</a>.
+  </p>
+</div>
+
+{% endblock %}

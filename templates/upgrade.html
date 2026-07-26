@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Change your plan - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card form-card-wide">
+  <h1>Change your plan</h1>
+  <p class="form-sub">Pick the plan you want. It applies to your next analysis.</p>
+
+  <form method="post" action="{{ url_for('upgrade') }}">
+
+    <fieldset class="plan-picker">
+      <legend>Available plans</legend>
+      {% for plan_id, plan in PLANS.items() %}
+        <label class="plan-option">
+          <input type="radio" name="plan" value="{{ plan_id }}"
+                 {% if plan_id == current_plan_id %}checked{% endif %}>
+          <span class="plan-option-body">
+            <strong>
+              {{ plan['name'] }}
+              {% if plan['savings'] %}<span class="plan-save-tag">{{ plan['savings'] }}</span>{% endif %}
+              {% if plan_id == current_plan_id %}<span class="plan-current-tag">Current plan</span>{% endif %}
+            </strong>
+            <span class="plan-option-price">{{ plan['price'] }} {{ plan['period'] }}</span>
+            <span class="plan-option-limit">{{ plan['email_limit'] }} emails per analysis</span>
+          </span>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <button type="submit" class="btn btn-block">Save my plan</button>
+  </form>
+
+  <p class="form-footer">
+    <a href="{{ url_for('dashboard') }}">Back to dashboard</a>
+  </p>
+</div>
+
+{% endblock %}

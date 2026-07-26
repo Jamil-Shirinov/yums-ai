@@ -1,0 +1,53 @@
+{# The shell every other page slots into: header, flash messages, footer. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Yums AI{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {# Pages can add their own head tags here - the results page uses it for
+     the auto-refresh while an analysis is still running. #}
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+  <header class="site-header">
+    <a class="logo" href="{{ url_for('index') }}">😋 Yums AI</a>
+    <nav>
+      {% if user %}
+        <span class="nav-email">{{ user['email'] }}</span>
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('logout') }}">Log out</a>
+      {% else %}
+        <a href="{{ url_for('login') }}">Log in</a>
+        <a class="btn btn-small" href="{{ url_for('signup') }}">Sign up</a>
+      {% endif %}
+    </nav>
+  </header>
+
+  <main class="page">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    Yums is read-only. It never sends, deletes, or modifies your email.
+  </footer>
+
+  <div class="site-legal">
+    <p>
+      &copy; Yums 2026. Created by
+      <a href="https://jshirinov.com" target="_blank" rel="noopener noreferrer">Jamil Shirinov</a>.
+    </p>
+  </div>
+
+</body>
+</html>

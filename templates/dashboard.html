@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Yums AI{% endblock %}
+
+{% block content %}
+
+<h1 class="page-title">Dashboard</h1>
+
+<div class="dash-grid">
+
+  {# --- The big button (or a nudge to connect Gmail first) --- #}
+  <section class="card">
+    {% if user['gmail_token'] and active_run_id %}
+      <h2>Analysis in progress</h2>
+      <p class="card-sub">
+        Yums is working through your inbox right now. It keeps going even if
+        you close the tab.
+      </p>
+      <a class="btn btn-big" href="{{ url_for('results', run_id=active_run_id) }}">See progress</a>
+
+    {% elif user['gmail_token'] %}
+      <h2>Ready when you are</h2>
+      <p class="card-sub">
+        Yums will read up to <strong>{{ plan['email_limit'] }}</strong> unread emails
+        from <strong>{{ user['gmail_address'] }}</strong> and sort them for you.
+      </p>
+
+      <form method="post" action="{{ url_for('analyze') }}" id="analyze-form">
+        <button type="submit" class="btn btn-big" id="analyze-button">Analyze my inbox</button>
+      </form>
+
+      <p class="card-note">
+        Runs in the background, so you don't have to sit and wait for it.
+      </p>
+    {% else %}
+      <h2>Connect your Gmail</h2>
+      <p class="card-sub">
+        One trip through Google's consent screen and you're set. Yums asks for
+        read-only access, so it can never send, delete, or change anything.
+      </p>
+      <a class="btn btn-big" href="{{ url_for('gmail_connect') }}">Connect Gmail</a>
+    {% endif %}
+  </section>
+
+  {# --- Account details --- #}
+  <section class="card">
+    <h2>Your account</h2>
+    <dl class="detail-list">
+      <dt>Email</dt>
+      <dd>{{ user['email'] }}</dd>
+
+      <dt>Plan</dt>
+      <dd class="plan-line">
+        {{ plan['name'] }}
+        <a class="btn btn-outline btn-tiny" href="{{ url_for('upgrade') }}">Change Plan</a>
+      </dd>
+
+      <dt>Per analysis</dt>
+      <dd>{{ plan['email_limit'] }} unread emails</dd>
+
+      <dt>Gmail</dt>
+      <dd>
+        {% if user['gmail_token'] %}
+          <span class="status status-ok">Connected</span> {{ user['gmail_address'] }}
+        {% else %}
+          <span class="status status-off">Not connected</span>
+        {% endif %}
+      </dd>
+    </dl>
+
+    {% if user['gmail_token'] %}
+      <form method="post" action="{{ url_for('gmail_disconnect') }}">
+        <button type="submit" class="btn btn-quiet btn-small">Disconnect Gmail</button>
+      </form>
+    {% endif %}
+  </section>
+
+  {# --- Past runs --- #}
+  <section class="card card-wide">
+    <h2>Recent analyses</h2>
+    {% if history %}
+      <ul class="history">
+        {% for run in history %}
+          <li>
+            <a href="{{ url_for('results', run_id=run['id']) }}">
+              <span class="history-date">{{ run['created_at'].replace('T', ' ') }}</span>
+              <span class="history-counts">
+                {% if run['status'] in ('running', 'cancelling') %}
+                  <span class="pill pill-running">In progress</span>
+                {% elif run['status'] == 'failed' %}
+                  <span class="pill pill-failed">Didn't finish</span>
+                {% elif run['status'] == 'cancelled' %}
+                  {{ run['total'] }} emails
+                  <span class="pill pill-stopped">Stopped</span>
+                {% else %}
+                  {{ run['total'] }} emails
+                  <span class="pill pill-action">{{ run['actions'] }} actions</span>
+                {% endif %}
+              </span>
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="empty">No analyses yet. Your reports will show up here.</p>
+    {% endif %}
+  </section>
+
+</div>
+
+{% if user['gmail_token'] and not active_run_id %}
+<script>
+  // The server refuses a second run while one is going, but disabling the
+  // button avoids the pointless round trip on a double-click. The setTimeout
+  // lets the form finish submitting before we disable it.
+  document.getElementById("analyze-form").addEventListener("submit", function () {
+    var button = document.getElementById("analyze-button");
+    setTimeout(function () {
+      button.disabled = true;
+      button.textContent = "Starting…";
+    }, 0);
+  });
+</script>
+{% endif %}
+
+{% endblock %}
