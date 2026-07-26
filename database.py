@@ -23,9 +23,15 @@ def get_connection() -> sqlite3.Connection:
 
     row_factory makes rows behave like dicts, so we can write row["email"]
     instead of remembering that email is column number 1.
+
+    The timeout matters now that analyses run on background threads: if a
+    worker is mid-write while someone refreshes their progress page, the
+    reader waits its turn instead of failing with "database is locked".
+    Each caller opens and closes its own connection, so nothing is ever
+    shared across threads.
     """
 
-    conn = sqlite3.connect(DB_FILE)
+    conn = sqlite3.connect(DB_FILE, timeout=15)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -99,17 +105,38 @@ def init_db() -> None:
 
     # One row per "Analyze my inbox" click, so the dashboard can show history
     # and so refreshing the results page doesn't re-run (and re-bill) anything.
+    #
+    # The analysis happens on a background thread, so a row appears here the
+    # moment the button is pressed and is filled in as the work progresses:
+    #   status 'running' -> 'done' (results_json populated) or 'failed' (error set)
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS runs (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id       INTEGER NOT NULL,
-            created_at    TEXT NOT NULL,
-            results_json  TEXT NOT NULL,
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id           INTEGER NOT NULL,
+            created_at        TEXT NOT NULL,
+            results_json      TEXT NOT NULL,
+            status            TEXT NOT NULL DEFAULT 'done',
+            error             TEXT,
+            total_emails      INTEGER NOT NULL DEFAULT 0,
+            processed_emails  INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
         """
     )
+
+    # Runs recorded before analyses moved to the background all finished, so
+    # the DEFAULT 'done' above is exactly right for them.
+    run_columns = [row["name"] for row in conn.execute("PRAGMA table_info(runs)")]
+
+    if "status" not in run_columns:
+        conn.execute("ALTER TABLE runs ADD COLUMN status TEXT NOT NULL DEFAULT 'done'")
+    if "error" not in run_columns:
+        conn.execute("ALTER TABLE runs ADD COLUMN error TEXT")
+    if "total_emails" not in run_columns:
+        conn.execute("ALTER TABLE runs ADD COLUMN total_emails INTEGER NOT NULL DEFAULT 0")
+    if "processed_emails" not in run_columns:
+        conn.execute("ALTER TABLE runs ADD COLUMN processed_emails INTEGER NOT NULL DEFAULT 0")
 
     conn.commit()
     conn.close()
@@ -282,20 +309,114 @@ def _summary_to_dict(summary: EmailSummary) -> dict:
     }
 
 
-def create_run(user_id: int, summaries: list[EmailSummary]) -> int:
-    """Save the results of one analysis and return the new run's id."""
+def create_pending_run(user_id: int) -> int:
+    """Open a new run in the 'running' state and return its id.
 
-    results_json = json.dumps([_summary_to_dict(s) for s in summaries])
+    Called the instant the button is pressed, before any work happens, so the
+    browser has somewhere to go while the background thread gets going.
+    """
 
     conn = get_connection()
     cursor = conn.execute(
-        "INSERT INTO runs (user_id, created_at, results_json) VALUES (?, ?, ?)",
-        (user_id, datetime.now().isoformat(timespec="seconds"), results_json),
+        "INSERT INTO runs (user_id, created_at, results_json, status) VALUES (?, ?, ?, 'running')",
+        (user_id, datetime.now().isoformat(timespec="seconds"), "[]"),
     )
     conn.commit()
     run_id = cursor.lastrowid
     conn.close()
     return run_id
+
+
+def set_run_total(run_id: int, total: int) -> None:
+    """Record how many emails this run is going to work through, once we've
+    fetched them and know."""
+
+    conn = get_connection()
+    conn.execute("UPDATE runs SET total_emails = ? WHERE id = ?", (total, run_id))
+    conn.commit()
+    conn.close()
+
+
+def record_run_progress(run_id: int, processed: int) -> None:
+    """Tick the counter the progress page reads."""
+
+    conn = get_connection()
+    conn.execute("UPDATE runs SET processed_emails = ? WHERE id = ?", (processed, run_id))
+    conn.commit()
+    conn.close()
+
+
+def complete_run(run_id: int, summaries: list[EmailSummary]) -> None:
+    """Store the finished results and mark the run done."""
+
+    results_json = json.dumps([_summary_to_dict(s) for s in summaries])
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE runs SET results_json = ?, status = 'done', processed_emails = ? WHERE id = ?",
+        (results_json, len(summaries), run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def fail_run(run_id: int, message: str) -> None:
+    """Mark a run as failed, with something the user can act on."""
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE runs SET status = 'failed', error = ? WHERE id = ?", (message, run_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def create_completed_run(user_id: int, summaries: list[EmailSummary]) -> int:
+    """Record an already-finished run in one go.
+
+    Only used for seeding demo data and tests - real analyses go through
+    create_pending_run() and complete_run().
+    """
+
+    run_id = create_pending_run(user_id)
+    set_run_total(run_id, len(summaries))
+    complete_run(run_id, summaries)
+    return run_id
+
+
+def get_active_run(user_id: int):
+    """Return the id of this account's in-flight run, if there is one.
+
+    Used to stop somebody kicking off a second analysis - and a second
+    OpenAI bill - while the first is still going.
+    """
+
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id FROM runs WHERE user_id = ? AND status = 'running' ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def fail_interrupted_runs() -> int:
+    """Clean up after a restart.
+
+    Background threads die with the process, so anything still marked
+    'running' when the app starts is never going to finish. Without this it
+    would sit there claiming to be in progress forever.
+    """
+
+    conn = get_connection()
+    cursor = conn.execute(
+        "UPDATE runs SET status = 'failed', error = ? WHERE status = 'running'",
+        ("This analysis was interrupted when the server restarted. Please run it again.",),
+    )
+    conn.commit()
+    count = cursor.rowcount
+    conn.close()
+    return count
 
 
 def get_run(run_id: int, user_id: int):
@@ -318,6 +439,10 @@ def get_run(run_id: int, user_id: int):
         "id": row["id"],
         "created_at": row["created_at"],
         "results": json.loads(row["results_json"]),
+        "status": row["status"],
+        "error": row["error"],
+        "total_emails": row["total_emails"],
+        "processed_emails": row["processed_emails"],
     }
 
 
@@ -327,7 +452,7 @@ def list_runs(user_id: int, limit: int = 5) -> list[dict]:
 
     conn = get_connection()
     rows = conn.execute(
-        "SELECT id, created_at, results_json FROM runs WHERE user_id = ? "
+        "SELECT id, created_at, results_json, status FROM runs WHERE user_id = ? "
         "ORDER BY id DESC LIMIT ?",
         (user_id, limit),
     ).fetchall()
@@ -340,6 +465,7 @@ def list_runs(user_id: int, limit: int = 5) -> list[dict]:
             {
                 "id": row["id"],
                 "created_at": row["created_at"],
+                "status": row["status"],
                 "total": len(results),
                 "actions": len([r for r in results if r["category"] == "action"]),
             }

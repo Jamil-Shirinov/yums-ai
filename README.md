@@ -44,6 +44,8 @@ The core pipeline runs as follows: `gmail_client.py` retrieves unread messages a
 
 From there the two front ends diverge. `main.py` aggregates the results, prints them to the terminal, and writes them to `output/` as Markdown. `app.py` saves them to SQLite against the logged-in account and renders them as a report page, so refreshing the page never re-runs (or re-bills) the analysis.
 
+The web app also runs the pipeline **off the request thread**. Pressing "Analyze my inbox" records a run, hands the work to a small thread pool, and redirects immediately; the report page doubles as a live progress view and refreshes itself until the run finishes. Without this, a 100-email Business run would hold a request open for minutes and hit most hosting platforms' timeouts. Only one analysis per account can be in flight at a time, so a second click can't start a second OpenAI bill.
+
 The split in Gmail authentication is worth calling out. The CLI uses a **Desktop app** OAuth client, which is allowed to open a browser on the same machine and listen on localhost — fine for one person on their own laptop. The web app uses a **Web application** OAuth client instead: it redirects the user to Google, receives them back at `/gmail/callback`, and stores that user's token against their account row. The two client types are configured separately (see Setup), so running one does not disturb the other.
  
 Under the hood, Yums treats every unread message the same way. Yums is quiet, methodic, loyal, and with no opinions about your inbox habits 😊
@@ -238,7 +240,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 The web platform is a working implementation, not a hardened deployment. At minimum, the following would need addressing first:
 
 - **Serve over HTTPS** behind a real WSGI server (gunicorn, waitress). `python app.py` starts Flask's development server, which is single-threaded and not built for real traffic. Then remove `OAUTHLIB_INSECURE_TRANSPORT` and set `SESSION_COOKIE_SECURE = True`.
-- **Analysis runs synchronously** inside the request. At one OpenAI call per email, a 100-email Business run can take a couple of minutes and will hit most hosting platforms' request timeouts. This wants a background job queue.
+- **Background analyses live in the web process.** They run on a thread pool inside the app, which keeps requests fast but means a restart abandons any run in flight (those are marked failed on the next start, so nothing hangs). Running more than one app process — as most production setups do — gives each its own pool, and `ANALYSIS_WORKERS` then applies per process. A shared queue such as Celery or RQ would be the next step.
 - **No rate limiting or login throttling** exists, so nothing slows down repeated password guesses or someone hammering the analyze button. Confirmation codes are the exception — those are capped at five attempts.
 - **Configure SMTP.** With `SMTP_HOST`/`SMTP_USERNAME`/`SMTP_PASSWORD` unset, confirmation codes are printed to the server console instead of emailed. That is a convenience for local development; in production it means anyone who can read the logs can finish someone else's signup, and it defeats the point of confirming the address at all.
 - **Confirmation codes are stored in plain text** in the database, alongside a 15-minute expiry. Hashing them would be better if the database is ever exposed.

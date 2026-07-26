@@ -76,6 +76,17 @@ def classify_email(client: OpenAI, email: EmailMessage) -> EmailSummary:
 
 # --------------------
 
-def classify_emails(client: OpenAI, emails: list[EmailMessage]) -> list[EmailSummary]:
-    """Classify a whole batch of emails, one at a time."""
-    return [classify_email(client, email) for email in emails]
+def classify_emails(client: OpenAI, emails: list[EmailMessage], on_progress=None) -> list[EmailSummary]:
+    """Classify a whole batch of emails, one at a time.
+
+    on_progress, if given, is called with the number finished after each
+    email. The web app uses it to drive its progress bar; the CLI leaves it
+    out and nothing changes.
+    """
+
+    summaries = []
+    for index, email in enumerate(emails, start=1):
+        summaries.append(classify_email(client, email))
+        if on_progress is not None:
+            on_progress(index)
+    return summaries

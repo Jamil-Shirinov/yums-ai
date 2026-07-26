@@ -12,6 +12,7 @@ Run it with:  python app.py
 
 import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -34,6 +35,12 @@ from plans import DEFAULT_PLAN, PLANS, TIERS, get_plan
 CODE_TTL_MINUTES = 15
 MAX_CODE_ATTEMPTS = 5
 
+# Analyses run on background threads so the browser isn't left hanging for
+# minutes on a big inbox. The pool is deliberately small: each analysis is a
+# queue of OpenAI calls, and letting dozens run at once would just pile up
+# requests. Extra analyses wait their turn rather than being refused.
+ANALYSIS_WORKERS = 4
+
 load_dotenv()
 
 app = Flask(__name__)
@@ -55,6 +62,16 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True
 encryption.ensure_key()
 
 database.init_db()
+
+# Background threads don't survive a restart, so anything still flagged as
+# running belongs to a process that's already gone.
+interrupted = database.fail_interrupted_runs()
+if interrupted:
+    print(f"[app] marked {interrupted} interrupted analysis run(s) as failed")
+
+analysis_pool = ThreadPoolExecutor(
+    max_workers=ANALYSIS_WORKERS, thread_name_prefix="analysis"
+)
 
 # --------------------
 # Small helpers
@@ -314,6 +331,7 @@ def dashboard():
         "dashboard.html",
         plan=get_plan(user["plan"]),
         history=database.list_runs(user["id"]),
+        active_run_id=database.get_active_run(user["id"]),
     )
 
 
@@ -424,14 +442,52 @@ def gmail_disconnect():
 # The actual analysis
 # --------------------
 
+def perform_analysis(user_id: int, run_id: int, limit: int) -> None:
+    """Do the actual work, on a background thread.
+
+    Nothing in here touches Flask - no session, no flash, no request - because
+    none of that exists off the request thread. Progress and problems are
+    written to the run row instead, and the results page reads them back.
+    """
+
+    try:
+        service, refreshed_token = gmail_oauth.build_service(
+            database.get_gmail_token(user_id)
+        )
+        if refreshed_token:
+            database.save_gmail_token(user_id, refreshed_token)
+
+        emails = fetch_unread_emails(service, limit=limit)
+        database.set_run_total(run_id, len(emails))
+
+        # An empty inbox still finishes as a real (empty) report rather than
+        # an error - "you're all caught up" is a legitimate answer.
+        summaries = classify_emails(
+            get_openai_client(),
+            emails,
+            on_progress=lambda done: database.record_run_progress(run_id, done),
+        )
+        database.complete_run(run_id, summaries)
+
+    except RuntimeError as error:
+        # Our own messages ("reconnect your Gmail", "no API key") are written
+        # for a human to read, so they can be shown as-is.
+        database.fail_run(run_id, str(error))
+    except Exception as error:
+        print(f"[perform_analysis] run {run_id}: {type(error).__name__}: {error}")
+        database.fail_run(
+            run_id, "Something went wrong while analyzing your inbox. Please try again."
+        )
+
+
 @app.route("/analyze", methods=["POST"])
 @login_required
 def analyze():
-    """The one button on the dashboard: fetch unread mail, classify it, save
-    the results, then redirect to the report.
+    """Start an analysis and send the user straight to its progress page.
 
-    Redirecting afterwards (rather than rendering here) means refreshing the
-    report page doesn't quietly run - and bill for - a second analysis.
+    The work itself happens on a background thread, so this returns in
+    milliseconds however big the inbox is. Redirecting (rather than rendering)
+    also means refreshing the report never re-runs - or re-bills - anything.
     """
 
     user = current_user()
@@ -440,33 +496,25 @@ def analyze():
         flash("Connect your Gmail account first.", "error")
         return redirect(url_for("dashboard"))
 
-    limit = get_plan(user["plan"])["email_limit"]
+    # One at a time per account, or an impatient second click would start a
+    # second analysis and a second OpenAI bill.
+    active_run_id = database.get_active_run(user["id"])
+    if active_run_id:
+        flash("An analysis is already running.", "info")
+        return redirect(url_for("results", run_id=active_run_id))
 
+    # Checked here rather than in the worker, so a missing key is an instant
+    # error instead of a run that starts and immediately fails.
     try:
-        # The row only tells us a connection exists; this decrypts it.
-        service, refreshed_token = gmail_oauth.build_service(
-            database.get_gmail_token(user["id"])
-        )
-        if refreshed_token:
-            database.save_gmail_token(user["id"], refreshed_token)
-
-        emails = fetch_unread_emails(service, limit=limit)
-
-        if not emails:
-            flash("No unread emails found. You're all caught up!", "info")
-            return redirect(url_for("dashboard"))
-
-        summaries = classify_emails(get_openai_client(), emails)
-        run_id = database.create_run(user["id"], summaries)
-
+        get_openai_client()
     except RuntimeError as error:
-        # Our own "reconnect your Gmail" / "no API key" messages are safe to show.
         flash(str(error), "error")
         return redirect(url_for("dashboard"))
-    except Exception as error:
-        print(f"[analyze] {type(error).__name__}: {error}")
-        flash("Something went wrong while analyzing your inbox. Please try again.", "error")
-        return redirect(url_for("dashboard"))
+
+    run_id = database.create_pending_run(user["id"])
+    analysis_pool.submit(
+        perform_analysis, user["id"], run_id, get_plan(user["plan"])["email_limit"]
+    )
 
     return redirect(url_for("results", run_id=run_id))
 

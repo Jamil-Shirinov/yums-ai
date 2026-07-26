@@ -255,7 +255,7 @@ def run_checks() -> int:
     database.update_plan(user["id"], "pro")
 
     print("\n-- reports --")
-    run_id = database.create_run(user["id"], SAMPLE_RESULTS)
+    run_id = database.create_completed_run(user["id"], SAMPLE_RESULTS)
     response = client.get(f"/results/{run_id}")
     check("report loads", response.status_code == 200, response.status_code)
     check("action email shown", b"sign your benefits form" in response.data)
@@ -301,6 +301,63 @@ def run_checks() -> int:
           response.headers.get("Location"))
     check("unconfirmed account still can't reach the dashboard",
           unconfirmed.get("/dashboard").status_code == 302)
+
+    print("\n-- analyses run in the background --")
+    # You can't start an analysis without a Gmail connection, so give the
+    # account one. It's never actually called - these checks drive the run
+    # row directly rather than talking to Google.
+    database.save_gmail_token(user["id"], '{"token": "placeholder"}', "boss@gmail.com")
+
+    pending_id = database.create_pending_run(user["id"])
+    check("a new run starts out running",
+          database.get_run(pending_id, user["id"])["status"] == "running")
+    check("an in-flight run is found as the active one",
+          database.get_active_run(user["id"]) == pending_id)
+
+    response = client.get(f"/results/{pending_id}")
+    check("progress page loads while it's still working", response.status_code == 200)
+    check("progress page says it's working", b"Reading your inbox" in response.data)
+    check("progress page refreshes itself", b'http-equiv="refresh"' in response.data)
+    check("no results shown yet", b"need action" not in response.data)
+
+    database.set_run_total(pending_id, 10)
+    database.record_run_progress(pending_id, 4)
+    response = client.get(f"/results/{pending_id}")
+    check("progress page shows how far along it is",
+          b"<strong>4</strong>" in response.data and b"<strong>10</strong>" in response.data)
+
+    response = client.get("/dashboard")
+    check("dashboard shows the run in progress", b"Analysis in progress" in response.data)
+    check("dashboard links to the running report",
+          f'/results/{pending_id}'.encode() in response.data)
+    check("history marks it as in progress", b"In progress" in response.data)
+
+    response = client.post("/analyze")
+    check("a second analysis is refused while one is running",
+          response.status_code == 302 and f"/results/{pending_id}" in response.headers["Location"],
+          response.headers.get("Location"))
+
+    database.fail_run(pending_id, "Ran out of biscuits.")
+    response = client.get(f"/results/{pending_id}")
+    check("failed run explains itself", b"Ran out of biscuits." in response.data)
+    check("failed run stops claiming to be in progress",
+          b'http-equiv="refresh"' not in response.data)
+    check("failed run is no longer the active one",
+          database.get_active_run(user["id"]) is None)
+
+    # A run left over from a process that died must not sit there forever.
+    stuck_id = database.create_pending_run(user["id"])
+    cleaned = database.fail_interrupted_runs()
+    check("a restart clears out interrupted runs", cleaned >= 1)
+    check("the interrupted run is marked failed",
+          database.get_run(stuck_id, user["id"])["status"] == "failed")
+    check("and it says why",
+          "restart" in database.get_run(stuck_id, user["id"])["error"].lower())
+
+    empty_id = database.create_completed_run(user["id"], [])
+    response = client.get(f"/results/{empty_id}")
+    check("a run that found nothing says you're caught up",
+          b"all caught up" in response.data)
 
     print("\n-- gmail tokens are encrypted at rest --")
     fake_token = '{"token": "secret-access-token", "refresh_token": "secret-refresh-token"}'
@@ -393,7 +450,7 @@ def seed_demo_account() -> None:
     # it directly. Real signups always go through the emailed code.
     database.mark_verified(user_id)
 
-    database.create_run(user_id, SAMPLE_RESULTS)
+    database.create_completed_run(user_id, SAMPLE_RESULTS)
     print("Added a sample report.\n")
     print("Now start the server with 'python app.py' and log in at")
     print("http://localhost:5000/login with:")

@@ -9,7 +9,15 @@
 
   {# --- The big button (or a nudge to connect Gmail first) --- #}
   <section class="card">
-    {% if user['gmail_token'] %}
+    {% if user['gmail_token'] and active_run_id %}
+      <h2>Analysis in progress</h2>
+      <p class="card-sub">
+        Yums is working through your inbox right now. It keeps going even if
+        you close the tab.
+      </p>
+      <a class="btn btn-big" href="{{ url_for('results', run_id=active_run_id) }}">See progress</a>
+
+    {% elif user['gmail_token'] %}
       <h2>Ready when you are</h2>
       <p class="card-sub">
         Yums will read up to <strong>{{ plan['email_limit'] }}</strong> unread emails
@@ -20,7 +28,9 @@
         <button type="submit" class="btn btn-big" id="analyze-button">Analyze my inbox</button>
       </form>
 
-      <p class="card-note">This takes a few seconds per email. Hang tight after clicking.</p>
+      <p class="card-note">
+        Runs in the background, so you don't have to sit and wait for it.
+      </p>
     {% else %}
       <h2>Connect your Gmail</h2>
       <p class="card-sub">
@@ -74,8 +84,14 @@
             <a href="{{ url_for('results', run_id=run['id']) }}">
               <span class="history-date">{{ run['created_at'].replace('T', ' ') }}</span>
               <span class="history-counts">
-                {{ run['total'] }} emails
-                <span class="pill pill-action">{{ run['actions'] }} actions</span>
+                {% if run['status'] == 'running' %}
+                  <span class="pill pill-running">In progress</span>
+                {% elif run['status'] == 'failed' %}
+                  <span class="pill pill-failed">Didn't finish</span>
+                {% else %}
+                  {{ run['total'] }} emails
+                  <span class="pill pill-action">{{ run['actions'] }} actions</span>
+                {% endif %}
               </span>
             </a>
           </li>
@@ -88,17 +104,16 @@
 
 </div>
 
-{% if user['gmail_token'] %}
+{% if user['gmail_token'] and not active_run_id %}
 <script>
-  // Classifying takes a few seconds per email, so make it obvious that
-  // something is happening and stop an impatient double-click from kicking
-  // off (and paying for) a second run. The setTimeout lets the form finish
-  // submitting before we disable the button.
+  // The server refuses a second run while one is going, but disabling the
+  // button avoids the pointless round trip on a double-click. The setTimeout
+  // lets the form finish submitting before we disable it.
   document.getElementById("analyze-form").addEventListener("submit", function () {
     var button = document.getElementById("analyze-button");
     setTimeout(function () {
       button.disabled = true;
-      button.textContent = "Reading your inbox…";
+      button.textContent = "Starting…";
     }, 0);
   });
 </script>
