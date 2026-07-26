@@ -125,10 +125,14 @@ def _get_header(headers: list, name: str) -> str:
     return ""
  
  
-def fetch_unread_emails(service, limit: int = 20) -> list[EmailMessage]:
+def fetch_unread_emails(service, limit: int = 20, should_stop=None) -> list[EmailMessage]:
     """Fetch up to `limit` unread emails from the inbox and return them
-    as a list of EmailMessage objects, ready for classification."""
- 
+    as a list of EmailMessage objects, ready for classification.
+
+    should_stop, if given, is checked before each message is downloaded, so
+    the web app's Stop button works during this stage too - fetching a full
+    inbox is itself one API call per email. The CLI doesn't pass it."""
+
     response = (
         service.users()
         .messages()
@@ -136,9 +140,11 @@ def fetch_unread_emails(service, limit: int = 20) -> list[EmailMessage]:
         .execute()
     )
     message_refs = response.get("messages", [])
- 
+
     emails = []
     for ref in message_refs:
+        if should_stop is not None and should_stop():
+            break
         msg = (
             service.users()
             .messages()

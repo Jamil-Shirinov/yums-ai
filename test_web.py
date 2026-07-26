@@ -11,7 +11,9 @@ talks to Google or OpenAI.
 """
 
 import argparse
+import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timedelta
@@ -337,6 +339,83 @@ def run_checks() -> int:
           response.status_code == 302 and f"/results/{pending_id}" in response.headers["Location"],
           response.headers.get("Location"))
 
+    print("\n-- stopping an analysis --")
+    response = client.get(f"/results/{pending_id}")
+    check("progress page offers a stop button", b"Stop this analysis" in response.data)
+
+    response = client.post(f"/results/{pending_id}/stop")
+    check("stop redirects back to the report",
+          response.status_code == 302 and f"/results/{pending_id}" in response.headers["Location"])
+    check("the run is flagged as cancelling",
+          database.get_run(pending_id, user["id"])["status"] == "cancelling")
+    check("a cancelling run still counts as active",
+          database.get_active_run(user["id"]) == pending_id)
+
+    response = client.get(f"/results/{pending_id}")
+    check("progress page says it's stopping", b"Stopping" in response.data)
+    check("stop button is gone once requested", b"Stop this analysis" not in response.data)
+    check("it keeps refreshing until the worker notices",
+          b'http-equiv="refresh"' in response.data)
+
+    # What the worker does when it sees the flag: keep the partial results.
+    database.cancel_run(pending_id, SAMPLE_RESULTS[:2])
+    stopped = database.get_run(pending_id, user["id"])
+    check("stopped run keeps what it already analyzed",
+          stopped["status"] == "cancelled" and len(stopped["results"]) == 2)
+    check("stopped run is no longer active", database.get_active_run(user["id"]) is None)
+
+    response = client.get(f"/results/{pending_id}")
+    check("stopped run shows the partial results",
+          b"sign your benefits form" in response.data)
+    check("and says it was stopped early", b"stopped this analysis early" in response.data)
+
+    response = client.post(f"/results/{pending_id}/stop", follow_redirects=True)
+    check("stopping an already-finished run says so",
+          b"already finished" in response.data)
+
+    empty_stop = database.create_pending_run(user["id"])
+    database.cancel_run(empty_stop, [])
+    response = client.get(f"/results/{empty_stop}")
+    check("a run stopped before anything ran says that, not 'all caught up'",
+          b"Analysis stopped" in response.data and b"all caught up" not in response.data)
+
+    print("\n-- downloading a report as json --")
+    response = client.get(f"/results/{run_id}/download")
+    check("download responds", response.status_code == 200, response.status_code)
+    check("served as json", response.mimetype == "application/json", response.mimetype)
+
+    disposition = response.headers.get("Content-Disposition", "")
+    check("sent as a file attachment", "attachment" in disposition)
+
+    filename = disposition.split("filename=")[-1].strip('"')
+    check("filename is analysis-<date>-<timestamp>.json",
+          re.fullmatch(r"analysis-\d{4}-\d{2}-\d{2}-\d{6}\.json", filename) is not None,
+          filename)
+
+    payload = json.loads(response.data)
+    check("json holds every result", len(payload["results"]) == len(SAMPLE_RESULTS))
+    check("json counts the categories",
+          payload["counts"]["total"] == 3 and payload["counts"]["actions"] == 2
+          and payload["counts"]["notices"] == 1, payload["counts"])
+    check("json names the run and when it ran",
+          payload["run_id"] == run_id and bool(payload["created_at"]))
+    check("json keeps the subjects",
+          any("benefits form" in r["email"]["subject"] for r in payload["results"]))
+    check("json has no email bodies in it",
+          all("body" not in r["email"] for r in payload["results"]))
+
+    running_download = database.create_pending_run(user["id"])
+    response = client.get(f"/results/{running_download}/download")
+    check("can't download a run that's still going", response.status_code == 302)
+    database.fail_run(running_download, "cleanup")
+
+    other_download = webapp.app.test_client()
+    signup_and_confirm(other_download, database, "nosy@company.com", "hunter2hunter2", "free")
+    response = other_download.get(f"/results/{run_id}/download", follow_redirects=True)
+    check("one account can't download another's report",
+          b"benefits form" not in response.data)
+
+    pending_id = database.create_pending_run(user["id"])
     database.fail_run(pending_id, "Ran out of biscuits.")
     response = client.get(f"/results/{pending_id}")
     check("failed run explains itself", b"Ran out of biscuits." in response.data)

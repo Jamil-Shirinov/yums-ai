@@ -536,6 +536,7 @@ input:focus {
 .pill-action  { background: var(--accent-wash); color: var(--accent-dark); }
 .pill-running { background: var(--notice-wash); color: var(--notice); }
 .pill-failed  { background: #fef2f2; color: var(--bad); }
+.pill-stopped { background: var(--line); color: var(--ink-soft); }
 
 /* --- Analysis in progress ----------------------------------- */
 
@@ -586,6 +587,15 @@ input:focus {
 }
 
 .results-header .muted { margin: 0; font-size: 0.9rem; }
+
+.results-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.stop-form { margin-top: 1.1rem; }
 
 .score-row {
   display: grid;

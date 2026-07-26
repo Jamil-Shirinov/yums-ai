@@ -10,6 +10,7 @@ terminal.
 Run it with:  python app.py
 """
 
+import json
 import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +18,9 @@ from datetime import datetime, timedelta
 from functools import wraps
 
 from dotenv import load_dotenv
-from flask import Flask, flash, redirect, render_template, request, session, url_for
+from flask import (
+    Flask, Response, flash, redirect, render_template, request, session, url_for
+)
 from openai import OpenAI
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -450,6 +453,11 @@ def perform_analysis(user_id: int, run_id: int, limit: int) -> None:
     written to the run row instead, and the results page reads them back.
     """
 
+    # The Stop button can't kill this thread, so it raises a flag on the run
+    # row instead and we check it between emails.
+    def stop_requested() -> bool:
+        return database.get_run_status(run_id) == "cancelling"
+
     try:
         service, refreshed_token = gmail_oauth.build_service(
             database.get_gmail_token(user_id)
@@ -457,7 +465,7 @@ def perform_analysis(user_id: int, run_id: int, limit: int) -> None:
         if refreshed_token:
             database.save_gmail_token(user_id, refreshed_token)
 
-        emails = fetch_unread_emails(service, limit=limit)
+        emails = fetch_unread_emails(service, limit=limit, should_stop=stop_requested)
         database.set_run_total(run_id, len(emails))
 
         # An empty inbox still finishes as a real (empty) report rather than
@@ -466,8 +474,14 @@ def perform_analysis(user_id: int, run_id: int, limit: int) -> None:
             get_openai_client(),
             emails,
             on_progress=lambda done: database.record_run_progress(run_id, done),
+            should_stop=stop_requested,
         )
-        database.complete_run(run_id, summaries)
+
+        # Whatever was classified before stopping is still worth keeping.
+        if stop_requested():
+            database.cancel_run(run_id, summaries)
+        else:
+            database.complete_run(run_id, summaries)
 
     except RuntimeError as error:
         # Our own messages ("reconnect your Gmail", "no API key") are written
@@ -534,6 +548,72 @@ def results(run_id: int):
         run=run,
         actions=[r for r in run["results"] if r["category"] == "action"],
         notices=[r for r in run["results"] if r["category"] != "action"],
+    )
+
+
+@app.route("/results/<int:run_id>/stop", methods=["POST"])
+@login_required
+def stop_analysis(run_id: int):
+    """Ask a running analysis to stop.
+
+    It won't stop instantly: the worker finishes the email it's on, keeps
+    everything classified so far, and closes the run off there.
+    """
+
+    user = current_user()
+
+    if database.get_run(run_id, user["id"]) is None:
+        flash("That analysis doesn't exist.", "error")
+        return redirect(url_for("dashboard"))
+
+    if database.request_cancel(run_id, user["id"]):
+        flash("Stopping the analysis - it'll keep whatever it's done so far.", "info")
+    else:
+        flash("That analysis had already finished.", "info")
+
+    return redirect(url_for("results", run_id=run_id))
+
+
+@app.route("/results/<int:run_id>/download")
+@login_required
+def download_results(run_id: int):
+    """Hand the report back as a JSON file."""
+
+    user = current_user()
+    run = database.get_run(run_id, user["id"])
+
+    if run is None:
+        flash("That report doesn't exist.", "error")
+        return redirect(url_for("dashboard"))
+
+    if run["status"] in ("running", "cancelling"):
+        flash("That analysis is still running - wait for it to finish first.", "info")
+        return redirect(url_for("results", run_id=run_id))
+
+    actions = [r for r in run["results"] if r["category"] == "action"]
+
+    export = {
+        "generated_by": "Yums AI",
+        "run_id": run["id"],
+        "created_at": run["created_at"],
+        "status": run["status"],
+        "counts": {
+            "total": len(run["results"]),
+            "actions": len(actions),
+            "notices": len(run["results"]) - len(actions),
+        },
+        "results": run["results"],
+    }
+
+    # Named after when the analysis ran, not when it was downloaded, so two
+    # downloads of the same report give the same file.
+    stamp = datetime.fromisoformat(run["created_at"])
+    filename = f"analysis-{stamp.strftime('%Y-%m-%d')}-{stamp.strftime('%H%M%S')}.json"
+
+    return Response(
+        json.dumps(export, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 # --------------------

@@ -76,16 +76,29 @@ def classify_email(client: OpenAI, email: EmailMessage) -> EmailSummary:
 
 # --------------------
 
-def classify_emails(client: OpenAI, emails: list[EmailMessage], on_progress=None) -> list[EmailSummary]:
+def classify_emails(
+    client: OpenAI,
+    emails: list[EmailMessage],
+    on_progress=None,
+    should_stop=None,
+) -> list[EmailSummary]:
     """Classify a whole batch of emails, one at a time.
 
     on_progress, if given, is called with the number finished after each
-    email. The web app uses it to drive its progress bar; the CLI leaves it
-    out and nothing changes.
+    email. The web app uses it to drive its progress bar.
+
+    should_stop, if given, is checked before each email; when it returns True
+    we stop and hand back what we've classified so far rather than throwing
+    the work away. That's how the web app's Stop button takes effect - the
+    worst case is one more email finishing after the click.
+
+    The CLI passes neither and behaves exactly as before.
     """
 
     summaries = []
     for index, email in enumerate(emails, start=1):
+        if should_stop is not None and should_stop():
+            break
         summaries.append(classify_email(client, email))
         if on_progress is not None:
             on_progress(index)

@@ -4,7 +4,7 @@
 {% block head %}
   {# While the background thread is working, reload every few seconds to pick
      up its progress. Cheap, and needs no JavaScript. #}
-  {% if run['status'] == 'running' %}
+  {% if run['status'] in ('running', 'cancelling') %}
     <meta http-equiv="refresh" content="3">
   {% endif %}
 {% endblock %}
@@ -16,14 +16,21 @@
     <h1 class="page-title">Inbox summary</h1>
     <p class="muted">{{ run['created_at'].replace('T', ' ') }}</p>
   </div>
-  <a class="btn btn-quiet" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+  <div class="results-actions">
+    {% if run['status'] not in ('running', 'cancelling') %}
+      <a class="btn btn-outline" href="{{ url_for('download_results', run_id=run['id']) }}">
+        Download JSON
+      </a>
+    {% endif %}
+    <a class="btn btn-quiet" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+  </div>
 </div>
 
 {# ---------- Still working ---------- #}
-{% if run['status'] == 'running' %}
+{% if run['status'] in ('running', 'cancelling') %}
 
   <section class="card working">
-    <h2>Reading your inbox…</h2>
+    <h2>{% if run['status'] == 'cancelling' %}Stopping…{% else %}Reading your inbox…{% endif %}</h2>
     {% if run['total_emails'] %}
       <p class="card-sub">
         Analyzed <strong>{{ run['processed_emails'] }}</strong>
@@ -39,7 +46,19 @@
         <div class="progress-fill progress-indeterminate"></div>
       </div>
     {% endif %}
+
+    {% if run['status'] == 'cancelling' %}
+      <p class="card-note">
+        Finishing the email it's on, then it'll stop and keep what it has.
+      </p>
+    {% else %}
+      <form method="post" action="{{ url_for('stop_analysis', run_id=run['id']) }}"
+            class="stop-form">
+        <button type="submit" class="btn btn-quiet btn-small">Stop this analysis</button>
+      </form>
+    {% endif %}
   </section>
+
 {# ---------- Something went wrong ---------- #}
 {% elif run['status'] == 'failed' %}
 
@@ -51,6 +70,15 @@
 
 {# ---------- Finished ---------- #}
 {% elif run['results'] %}
+
+  {% if run['status'] == 'cancelled' %}
+    <div class="flash flash-info">
+      You stopped the analysis early. Everything below was already done
+      {% if run['total_emails'] %}
+        - {{ run['results'] | length }} of {{ run['total_emails'] }} unread emails.
+      {% else %}.{% endif %}
+    </div>
+  {% endif %}
 
   <div class="score-row">
     <div class="score">
@@ -108,6 +136,18 @@
     {% else %}
       <p class="empty">No notices.</p>
     {% endif %}
+  </section>
+
+{# ---------- Stopped before anything was analyzed ---------- #}
+{% elif run['status'] == 'cancelled' %}
+
+  <section class="card">
+    <h2>Analysis stopped</h2>
+    <p class="card-sub">
+      You stopped this one before any emails had been analyzed, so there's
+      nothing to report.
+    </p>
+    <a class="btn" href="{{ url_for('dashboard') }}">Back to dashboard</a>
   </section>
 
 {# ---------- Finished, but there was nothing to read ---------- #}

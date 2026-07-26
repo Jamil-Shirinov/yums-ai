@@ -360,6 +360,55 @@ def complete_run(run_id: int, summaries: list[EmailSummary]) -> None:
     conn.close()
 
 
+def get_run_status(run_id: int):
+    """Just the status, for the worker to poll cheaply between emails."""
+
+    conn = get_connection()
+    row = conn.execute("SELECT status FROM runs WHERE id = ?", (run_id,)).fetchone()
+    conn.close()
+    return row["status"] if row else None
+
+
+def request_cancel(run_id: int, user_id: int) -> bool:
+    """Ask a running analysis to stop.
+
+    A thread can't be killed from outside, so this only raises a flag: the
+    worker notices it before the next email and stops there. Returns whether
+    a run was actually flagged - False means it had already finished, or
+    belongs to somebody else.
+    """
+
+    conn = get_connection()
+    cursor = conn.execute(
+        "UPDATE runs SET status = 'cancelling' "
+        "WHERE id = ? AND user_id = ? AND status = 'running'",
+        (run_id, user_id),
+    )
+    conn.commit()
+    changed = cursor.rowcount > 0
+    conn.close()
+    return changed
+
+
+def cancel_run(run_id: int, summaries: list[EmailSummary]) -> None:
+    """Close off a stopped run, keeping whatever it managed to classify.
+
+    The partial results are worth keeping - somebody who stops a 100-email
+    run after 30 still gets a report on those 30.
+    """
+
+    results_json = json.dumps([_summary_to_dict(s) for s in summaries])
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE runs SET results_json = ?, status = 'cancelled', processed_emails = ? "
+        "WHERE id = ?",
+        (results_json, len(summaries), run_id),
+    )
+    conn.commit()
+    conn.close()
+
+
 def fail_run(run_id: int, message: str) -> None:
     """Mark a run as failed, with something the user can act on."""
 
@@ -388,12 +437,14 @@ def get_active_run(user_id: int):
     """Return the id of this account's in-flight run, if there is one.
 
     Used to stop somebody kicking off a second analysis - and a second
-    OpenAI bill - while the first is still going.
+    OpenAI bill - while the first is still going. A run that's been asked to
+    stop still counts: its thread is busy until it notices.
     """
 
     conn = get_connection()
     row = conn.execute(
-        "SELECT id FROM runs WHERE user_id = ? AND status = 'running' ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM runs WHERE user_id = ? AND status IN ('running', 'cancelling') "
+        "ORDER BY id DESC LIMIT 1",
         (user_id,),
     ).fetchone()
     conn.close()
@@ -410,7 +461,8 @@ def fail_interrupted_runs() -> int:
 
     conn = get_connection()
     cursor = conn.execute(
-        "UPDATE runs SET status = 'failed', error = ? WHERE status = 'running'",
+        "UPDATE runs SET status = 'failed', error = ? "
+        "WHERE status IN ('running', 'cancelling')",
         ("This analysis was interrupted when the server restarted. Please run it again.",),
     )
     conn.commit()

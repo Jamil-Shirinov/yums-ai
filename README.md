@@ -46,6 +46,8 @@ From there the two front ends diverge. `main.py` aggregates the results, prints 
 
 The web app also runs the pipeline **off the request thread**. Pressing "Analyze my inbox" records a run, hands the work to a small thread pool, and redirects immediately; the report page doubles as a live progress view and refreshes itself until the run finishes. Without this, a 100-email Business run would hold a request open for minutes and hit most hosting platforms' timeouts. Only one analysis per account can be in flight at a time, so a second click can't start a second OpenAI bill.
 
+A running analysis can be **stopped** from that progress page. A Python thread can't be killed from outside, so Stop sets the run's status to `cancelling`; the worker checks that between emails (and between message downloads during the fetch stage) and closes the run off where it is. In practice it stops within one email of the click, and everything already classified is kept — stopping a 100-email run after 30 still gives a report on those 30. Finished reports can be **downloaded as JSON** for use elsewhere.
+
 The split in Gmail authentication is worth calling out. The CLI uses a **Desktop app** OAuth client, which is allowed to open a browser on the same machine and listen on localhost — fine for one person on their own laptop. The web app uses a **Web application** OAuth client instead: it redirects the user to Google, receives them back at `/gmail/callback`, and stores that user's token against their account row. The two client types are configured separately (see Setup), so running one does not disturb the other.
  
 Under the hood, Yums treats every unread message the same way. Yums is quiet, methodic, loyal, and with no opinions about your inbox habits 😊
@@ -163,7 +165,9 @@ On the first run, a browser window opens for Google OAuth login and consent. The
 | `/verify` | Enter the 6-digit code emailed at signup. The account is unusable until this passes. |
 | `/dashboard` | Connect or disconnect Gmail, run an analysis, browse past reports. |
 | `/upgrade` | Switch plans, reached from the Change Plan button beside the plan name. |
-| `/results/<id>` | A saved report, split into Actions Needed and Notices. |
+| `/results/<id>` | A saved report, split into Actions Needed and Notices. Doubles as the live progress page while a run is going. |
+| `/results/<id>/stop` | Stops a running analysis, keeping whatever it has already classified. |
+| `/results/<id>/download` | Downloads the report as `analysis-<date>-<timestamp>.json`. |
 
 Plans are defined in `plans.py` and control how many unread emails one analysis covers (Free 5, Pro 25, Business 100). Editing that file is all it takes to change the tiers.
 
