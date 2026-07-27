@@ -59,6 +59,9 @@ def init_db() -> None:
             verification_code        TEXT,
             verification_expires_at  TEXT,
             verification_attempts    INTEGER NOT NULL DEFAULT 0,
+            stripe_customer_id       TEXT,
+            stripe_subscription_id   TEXT,
+            pending_plan             TEXT,
             created_at               TEXT NOT NULL
         )
         """
@@ -84,6 +87,14 @@ def init_db() -> None:
         conn.execute(
             "ALTER TABLE users ADD COLUMN verification_attempts INTEGER NOT NULL DEFAULT 0"
         )
+
+    # Billing. stripe_customer_id sticks around once set, so a returning
+    # customer keeps one payment history. pending_plan remembers what someone
+    # picked at signup while they haven't paid for it yet - their plan column
+    # only ever reflects what they actually have.
+    for column in ("stripe_customer_id", "stripe_subscription_id", "pending_plan"):
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
 
     # Tokens stored before encryption existed are raw JSON sitting in the
     # file. Scramble them in place so nothing readable is left behind. The
@@ -219,15 +230,104 @@ def mark_verified(user_id: int) -> None:
     conn.close()
 
 
-def update_plan(user_id: int, plan: str) -> None:
-    """Move an account onto a different plan.
+def delete_account(user_id: int) -> None:
+    """Erase an account and everything belonging to it.
 
-    Because plans are simulated, this takes effect the moment it's called.
-    Once real billing exists, this should only run after a successful payment.
+    Reports go first so nothing is left orphaned pointing at a user row that
+    no longer exists. This is the end of the line - there's no undo, and
+    nothing is kept back for "just in case".
     """
 
     conn = get_connection()
-    conn.execute("UPDATE users SET plan = ? WHERE id = ?", (plan, user_id))
+    conn.execute("DELETE FROM runs WHERE user_id = ?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_user_by_stripe_customer(customer_id: str):
+    """Find an account from a Stripe customer id.
+
+    Webhooks arrive with no browser session attached, so this is how an
+    event about a subscription gets matched back to an account.
+    """
+
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE stripe_customer_id = ?", (customer_id,)
+    ).fetchone()
+    conn.close()
+    return row
+
+
+def save_stripe_customer(user_id: int, customer_id: str) -> None:
+    """Remember which Stripe customer an account is, first time they pay."""
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET stripe_customer_id = ? WHERE id = ?", (customer_id, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def activate_subscription(user_id: int, plan: str, subscription_id: str) -> None:
+    """Put an account on the plan it has just paid for.
+
+    Clears pending_plan at the same time: whatever they were part-way through
+    buying, this is now settled.
+    """
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET plan = ?, stripe_subscription_id = ?, pending_plan = NULL "
+        "WHERE id = ?",
+        (plan, subscription_id, user_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def end_subscription(user_id: int) -> None:
+    """Drop an account back to Free when its subscription ends.
+
+    Without this a cancelled customer would keep their paid limits forever.
+    """
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET plan = 'free', stripe_subscription_id = NULL WHERE id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    conn.close()
+
+
+def set_pending_plan(user_id: int, plan) -> None:
+    """Remember a plan someone chose but hasn't paid for yet (or clear it
+    by passing None)."""
+
+    conn = get_connection()
+    conn.execute("UPDATE users SET pending_plan = ? WHERE id = ?", (plan, user_id))
+    conn.commit()
+    conn.close()
+
+
+def update_plan(user_id: int, plan: str) -> None:
+    """Move an account onto a different plan.
+
+    This is the no-payment path: either Stripe isn't configured, or the plan
+    is one nobody has to pay for. Anything bought through Stripe goes via
+    activate_subscription() instead.
+
+    Clearing pending_plan matters here too - once someone settles on a plan,
+    whatever they half-chose at signup is no longer outstanding.
+    """
+
+    conn = get_connection()
+    conn.execute(
+        "UPDATE users SET plan = ?, pending_plan = NULL WHERE id = ?", (plan, user_id)
+    )
     conn.commit()
     conn.close()
 

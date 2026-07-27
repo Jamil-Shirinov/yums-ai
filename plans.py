@@ -97,6 +97,20 @@ TIERS = [
 
 DEFAULT_PLAN = "free"
 
+# Which environment variable holds each plan's Stripe price id. Free isn't
+# here because there's nothing to charge for, and anything missing from this
+# map (or with an unset variable) simply can't be bought - the app falls back
+# to switching plans without payment, which is how it behaved before Stripe.
+#
+# The ids themselves live in .env because they differ between your Stripe
+# test mode and live mode, and they're account-specific.
+STRIPE_PRICE_VARIABLES = {
+    "pro": "STRIPE_PRICE_PRO_MONTHLY",
+    "pro_annual": "STRIPE_PRICE_PRO_ANNUAL",
+    "business": "STRIPE_PRICE_BUSINESS_MONTHLY",
+    "business_annual": "STRIPE_PRICE_BUSINESS_ANNUAL",
+}
+
 # --------------------
 
 def get_plan(plan_id: str) -> dict:

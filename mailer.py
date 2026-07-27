@@ -18,6 +18,18 @@ from email.message import EmailMessage
 
 # --------------------
 
+def is_configured() -> bool:
+    """Whether real email will actually be sent.
+
+    False means codes only get printed to the console. Tests check this
+    before doing anything, so a stray SMTP setting can't turn a test run
+    into a pile of real email.
+    """
+
+    return _smtp_settings() is not None
+
+# --------------------
+
 def _smtp_settings():
     """Pull the SMTP config out of the environment.
 

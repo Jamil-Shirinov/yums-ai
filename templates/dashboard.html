@@ -5,6 +5,23 @@
 
 <h1 class="page-title">Dashboard</h1>
 
+{# Somebody who backed out of checkout is on Free but still wanted the plan
+   they picked. Offer the way back rather than making them go looking. #}
+{% if user['pending_plan'] and is_purchasable(user['pending_plan']) %}
+  <section class="card pending-plan">
+    <div>
+      <h2>Finish setting up {{ get_plan(user['pending_plan'])['name'] }}</h2>
+      <p class="card-sub">
+        You chose it at signup but haven't paid yet, so you're on Free for now.
+      </p>
+    </div>
+    <form method="post" action="{{ url_for('upgrade') }}">
+      <input type="hidden" name="plan" value="{{ user['pending_plan'] }}">
+      <button type="submit" class="btn">Complete payment</button>
+    </form>
+  </section>
+{% endif %}
+
 <div class="dash-grid">
 
   {# --- The big button (or a nudge to connect Gmail first) --- #}
@@ -67,11 +84,22 @@
       </dd>
     </dl>
 
-    {% if user['gmail_token'] %}
-      <form method="post" action="{{ url_for('gmail_disconnect') }}">
-        <button type="submit" class="btn btn-quiet btn-small">Disconnect Gmail</button>
-      </form>
-    {% endif %}
+    <div class="card-actions">
+      {% if user['stripe_customer_id'] %}
+        {# Card details, invoices and cancelling all live in Stripe's portal. #}
+        <a class="btn btn-quiet btn-small" href="{{ url_for('billing_portal') }}">Manage billing</a>
+      {% endif %}
+      {% if user['gmail_token'] %}
+        <form method="post" action="{{ url_for('gmail_disconnect') }}">
+          <button type="submit" class="btn btn-quiet btn-small">Disconnect Gmail</button>
+        </form>
+      {% endif %}
+    </div>
+
+    {# Set apart from the everyday buttons above, so it's never a mis-click. #}
+    <p class="danger-zone">
+      <a href="{{ url_for('delete_account') }}">Delete my account</a>
+    </p>
   </section>
 
   {# --- Past runs --- #}

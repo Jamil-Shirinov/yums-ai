@@ -24,6 +24,7 @@ from flask import (
 from openai import OpenAI
 from werkzeug.security import check_password_hash, generate_password_hash
 
+import billing
 import database
 import encryption
 import gmail_oauth
@@ -119,6 +120,31 @@ def start_verification(user_id: int, email: str) -> bool:
     return mailer.send_verification_code(email, code)
 
 
+def start_checkout(user, plan_id: str):
+    """Send the user off to Stripe to pay for a plan.
+
+    Used from two places - finishing signup, and changing plan later - so it
+    lives here rather than being written twice.
+    """
+
+    try:
+        checkout_url = billing.create_checkout_session(
+            user,
+            plan_id,
+            # Stripe swaps {CHECKOUT_SESSION_ID} for the real id when it
+            # sends the customer back, so the success page knows what to
+            # look up. It must not be URL-encoded, hence the plain join.
+            success_url=url_for("billing_success", _external=True)
+            + "?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=url_for("billing_cancel", _external=True),
+        )
+        return redirect(checkout_url)
+    except Exception as error:
+        print(f"[start_checkout] {type(error).__name__}: {error}")
+        flash("Couldn't reach the payment page just now. Please try again.", "error")
+        return redirect(url_for("dashboard"))
+
+
 def get_openai_client() -> OpenAI:
     """Build the OpenAI client. One key for the whole platform - customers
     pay us for a plan, we pay OpenAI."""
@@ -137,7 +163,16 @@ def inject_globals():
     """Make these available inside every template without passing them in
     to each render_template() call by hand."""
 
-    return {"user": current_user(), "PLANS": PLANS, "TIERS": TIERS, "get_plan": get_plan}
+    return {
+        "user": current_user(),
+        "PLANS": PLANS,
+        "TIERS": TIERS,
+        "get_plan": get_plan,
+        # So pages can say "continue to payment" rather than "save" when a
+        # choice is actually going to ask for a card.
+        "billing_enabled": billing.is_configured(),
+        "is_purchasable": billing.is_purchasable,
+    }
 
 
 @app.template_filter("sender_name")
@@ -191,7 +226,19 @@ def signup():
         else:
             # generate_password_hash salts and hashes for us - the plain
             # password is never written down anywhere.
-            user_id = database.create_user(email, generate_password_hash(password), plan)
+            #
+            # A paid plan has to be paid for, so the account starts on Free
+            # and we only remember what they picked. That way the plan column
+            # always means "what this account actually has". With Stripe not
+            # configured there's nothing to pay, and the chosen plan applies
+            # straight away exactly as it used to.
+            if billing.is_purchasable(plan):
+                user_id = database.create_user(
+                    email, generate_password_hash(password), DEFAULT_PLAN
+                )
+                database.set_pending_plan(user_id, plan)
+            else:
+                user_id = database.create_user(email, generate_password_hash(password), plan)
 
             # Not logged in yet: the account stays unconfirmed, and only
             # pending_user_id is set, until they prove they can read the
@@ -290,6 +337,14 @@ def verify():
             session.clear()
             session["user_id"] = user["id"]
             flash("Email confirmed. Welcome to Yums!", "success")
+
+            # If they signed up for a paid plan, this is the moment to
+            # collect payment. Abandoning checkout just leaves them on Free
+            # with a working account, which they can upgrade whenever.
+            pending = database.get_user_by_id(user["id"])["pending_plan"]
+            if pending and billing.is_purchasable(pending):
+                return start_checkout(database.get_user_by_id(user["id"]), pending)
+
             return redirect(url_for("dashboard"))
 
     return render_template("verify.html", email=user["email"])
@@ -314,6 +369,84 @@ def resend_code():
         flash("Email isn't set up on this server - check the terminal for your code.", "info")
 
     return redirect(url_for("verify"))
+
+
+@app.route("/account/delete", methods=["GET", "POST"])
+@login_required
+def delete_account():
+    """First of two confirmations for deleting an account.
+
+    This one just lays out what's about to happen. Agreeing here doesn't
+    delete anything - it unlocks the second page, which is where the account
+    actually goes.
+    """
+
+    user = current_user()
+
+    if request.method == "POST":
+        # Marks that they've read the warning. The second page checks for
+        # this, so nobody lands there straight from a link.
+        session["delete_account_confirmed"] = True
+        return redirect(url_for("delete_account_confirm"))
+
+    return render_template(
+        "delete_account.html",
+        plan=get_plan(user["plan"]),
+        report_count=len(database.list_runs(user["id"], limit=1000)),
+    )
+
+
+@app.route("/account/delete/confirm", methods=["GET", "POST"])
+@login_required
+def delete_account_confirm():
+    """Second confirmation, and the deletion itself.
+
+    Asking for the email and the password isn't ceremony: it stops a
+    logged-in machine left unattended being one click away from wiping
+    somebody's account, and makes it hard to do by accident.
+    """
+
+    user = current_user()
+
+    if not session.get("delete_account_confirmed"):
+        return redirect(url_for("delete_account"))
+
+    if request.method == "POST":
+        typed_email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+
+        if typed_email != user["email"]:
+            flash("That email doesn't match this account.", "error")
+        elif not check_password_hash(user["password_hash"], password):
+            flash("That password isn't right.", "error")
+        else:
+            # Stop an analysis mid-flight, so its thread isn't left running
+            # up an OpenAI bill for an account that no longer exists.
+            active_run_id = database.get_active_run(user["id"])
+            if active_run_id:
+                database.request_cancel(active_run_id, user["id"])
+
+            # Cancel billing before the record goes, or Stripe would happily
+            # keep charging a customer we can no longer see.
+            if user["stripe_subscription_id"] and billing.is_configured():
+                try:
+                    billing.cancel_subscription(user["stripe_subscription_id"])
+                except Exception as error:
+                    print(f"[delete_account] couldn't cancel subscription: {error}")
+
+            # Hand the Gmail grant back rather than just forgetting it.
+            if user["gmail_token"]:
+                try:
+                    gmail_oauth.revoke_token(database.get_gmail_token(user["id"]))
+                except Exception as error:
+                    print(f"[delete_account] couldn't revoke Gmail access: {error}")
+
+            database.delete_account(user["id"])
+            session.clear()
+            flash("Your account and all of its reports have been deleted.", "info")
+            return redirect(url_for("index"))
+
+    return render_template("delete_account_confirm.html")
 
 
 @app.route("/logout")
@@ -358,6 +491,17 @@ def upgrade():
         elif new_plan == user["plan"]:
             flash("That's already your current plan.", "info")
             return redirect(url_for("dashboard"))
+
+        # Dropping to Free while paying means cancelling a subscription.
+        # Stripe's portal handles that properly - proration, when access
+        # actually ends - so we hand it over rather than guessing.
+        elif new_plan == DEFAULT_PLAN and user["stripe_subscription_id"]:
+            flash("Cancel your subscription here and you'll move to Free.", "info")
+            return redirect(url_for("billing_portal"))
+
+        elif billing.is_purchasable(new_plan):
+            return start_checkout(user, new_plan)
+
         else:
             database.update_plan(user["id"], new_plan)
             plan = get_plan(new_plan)
@@ -369,6 +513,166 @@ def upgrade():
             return redirect(url_for("dashboard"))
 
     return render_template("upgrade.html", current_plan_id=user["plan"])
+
+# --------------------
+# Billing
+# --------------------
+
+def apply_paid_checkout(checkout_session) -> None:
+    """Put an account onto the plan a completed checkout paid for.
+
+    Written to be safe to run more than once, because it is: Stripe retries
+    webhooks, and the success page does the same thing independently so the
+    customer isn't left waiting on a delivery that might take a few seconds.
+    """
+
+    metadata = checkout_session.get("metadata") or {}
+    user_id = checkout_session.get("client_reference_id") or metadata.get("user_id")
+    plan_id = metadata.get("plan_id")
+
+    if not user_id or plan_id not in PLANS:
+        print(f"[billing] checkout with no usable user/plan: {user_id} / {plan_id}")
+        return
+
+    # "no_payment_required" covers 100%-off coupons and trials.
+    if checkout_session.get("payment_status") not in ("paid", "no_payment_required"):
+        return
+
+    user = database.get_user_by_id(int(user_id))
+    if user is None:
+        return
+
+    if checkout_session.get("customer"):
+        database.save_stripe_customer(user["id"], checkout_session["customer"])
+
+    database.activate_subscription(user["id"], plan_id, checkout_session.get("subscription"))
+    print(f"[billing] account {user['id']} is now on {plan_id}")
+
+
+def apply_subscription_change(subscription, ended: bool) -> None:
+    """React to a subscription changing inside Stripe.
+
+    Covers the cases our own UI never sees: a card that stops working, a
+    cancellation from the billing portal, or a plan switched there.
+    """
+
+    user = None
+    if subscription.get("customer"):
+        user = database.get_user_by_stripe_customer(subscription["customer"])
+
+    if user is None:
+        metadata_user = (subscription.get("metadata") or {}).get("user_id")
+        if metadata_user:
+            user = database.get_user_by_id(int(metadata_user))
+
+    if user is None:
+        return
+
+    if ended or subscription.get("status") not in ("active", "trialing"):
+        database.end_subscription(user["id"])
+        print(f"[billing] account {user['id']} dropped back to free")
+        return
+
+    # Still paying, but possibly for something else now.
+    items = (subscription.get("items") or {}).get("data") or []
+    price_id = (items[0].get("price") or {}).get("id") if items else None
+    plan_id = billing.plan_id_for_price(price_id)
+
+    if plan_id and plan_id != user["plan"]:
+        database.activate_subscription(user["id"], plan_id, subscription.get("id"))
+        print(f"[billing] account {user['id']} moved to {plan_id} from Stripe")
+
+
+@app.route("/billing/success")
+@login_required
+def billing_success():
+    """Where Stripe sends the customer after a successful payment.
+
+    The webhook is what makes a payment official, but it can land a moment
+    later - so this checks the session itself and applies the same change,
+    rather than showing someone a dashboard that hasn't caught up yet.
+    """
+
+    session_id = request.args.get("session_id", "")
+
+    if session_id:
+        try:
+            checkout_session = billing.get_checkout_session(session_id)
+            # Only ever act on a session belonging to whoever is logged in.
+            if str(checkout_session.get("client_reference_id")) == str(current_user()["id"]):
+                apply_paid_checkout(checkout_session)
+        except Exception as error:
+            print(f"[billing_success] {type(error).__name__}: {error}")
+
+    plan = get_plan(current_user()["plan"])
+    flash(f"Payment received - you're on the {plan['name']} plan. Thanks!", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/billing/cancel")
+@login_required
+def billing_cancel():
+    """Where Stripe sends the customer if they back out of checkout."""
+
+    flash("Checkout cancelled - nothing was charged and your plan is unchanged.", "info")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/billing/portal", methods=["GET", "POST"])
+@login_required
+def billing_portal():
+    """Hand off to Stripe's billing portal to update a card or cancel."""
+
+    user = current_user()
+
+    if not user["stripe_customer_id"]:
+        flash("There's no subscription on this account yet.", "info")
+        return redirect(url_for("dashboard"))
+
+    try:
+        portal_url = billing.create_portal_session(
+            user["stripe_customer_id"], url_for("dashboard", _external=True)
+        )
+        return redirect(portal_url)
+    except Exception as error:
+        print(f"[billing_portal] {type(error).__name__}: {error}")
+        flash("Couldn't open the billing portal just now. Please try again.", "error")
+        return redirect(url_for("dashboard"))
+
+
+@app.route("/stripe/webhook", methods=["POST"])
+def stripe_webhook():
+    """Where Stripe tells us what actually happened.
+
+    Deliberately outside the login system - Stripe has no session with us.
+    The signature check is what makes it safe: without it, anyone who found
+    this URL could hand out free subscriptions.
+    """
+
+    try:
+        event = billing.verify_webhook(
+            request.data, request.headers.get("Stripe-Signature", "")
+        )
+    except RuntimeError as error:
+        # No signing secret configured - our problem, not Stripe's, so 500
+        # tells it to retry once we've fixed it.
+        print(f"[stripe_webhook] {error}")
+        return "", 500
+    except Exception as error:
+        print(f"[stripe_webhook] rejected: {type(error).__name__}: {error}")
+        return "", 400
+
+    event_type = event["type"]
+    payload = event["data"]["object"]
+
+    if event_type == "checkout.session.completed":
+        apply_paid_checkout(payload)
+    elif event_type in ("customer.subscription.updated", "customer.subscription.deleted"):
+        apply_subscription_change(payload, ended=event_type.endswith("deleted"))
+
+    # Anything else we don't care about, but still acknowledge - an
+    # unanswered webhook is one Stripe keeps retrying.
+    return "", 200
 
 # --------------------
 # Connecting Gmail

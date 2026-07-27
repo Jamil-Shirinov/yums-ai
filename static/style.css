@@ -516,6 +516,45 @@ input:focus {
   flex-wrap: wrap;
 }
 
+.danger-zone {
+  margin: 1.25rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.danger-zone a { color: var(--bad); text-decoration: none; }
+.danger-zone a:hover { text-decoration: underline; }
+
+.delete-list {
+  margin: 0 0 1.25rem;
+  padding-left: 1.2rem;
+  font-size: 0.92rem;
+  color: var(--ink-soft);
+}
+
+.delete-list li { margin-bottom: 0.5rem; }
+
+.pending-plan {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  border-color: var(--accent);
+}
+
+.pending-plan h2 { margin-bottom: 0.2rem; }
+.pending-plan .card-sub { margin: 0; }
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .status {
   display: inline-block;
   font-size: 0.75rem;

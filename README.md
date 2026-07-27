@@ -164,7 +164,10 @@ On the first run, a browser window opens for Google OAuth login and consent. The
 | `/signup` | Create an account and choose a plan. |
 | `/verify` | Enter the 6-digit code emailed at signup. The account is unusable until this passes. |
 | `/dashboard` | Connect or disconnect Gmail, run an analysis, browse past reports. |
-| `/upgrade` | Switch plans, reached from the Change Plan button beside the plan name. |
+| `/upgrade` | Switch plans, reached from the Change Plan button beside the plan name. Paid plans go via Stripe Checkout. |
+| `/account/delete` | Deletes an account for good, behind two separate confirmations. |
+| `/billing/portal` | Stripe's billing portal, for card changes and cancellation. |
+| `/stripe/webhook` | Where Stripe reports payments. Signature-verified, no login. |
 | `/results/<id>` | A saved report, split into Actions Needed and Notices. Doubles as the live progress page while a run is going. |
 | `/results/<id>/stop` | Stops a running analysis, keeping whatever it has already classified. |
 | `/results/<id>/download` | Downloads the report as `analysis-<date>-<timestamp>.json`. |
@@ -172,7 +175,7 @@ On the first run, a browser window opens for Google OAuth login and consent. The
 
 Plans are defined in `plans.py` and control how many unread emails one analysis covers (Free 5, Pro 25, Business 100). Editing that file is all it takes to change the tiers.
 
-**Plans are simulated.** Choosing one at signup records a name on the account and sets that limit — no payment processor is involved and no card is charged. Wiring up real billing means adding a checkout step to `/signup`; nothing else in the app needs to change, since every other route just reads `user["plan"]`.
+**Payment is optional.** With Stripe configured, paid plans go through Stripe Checkout and the plan on an account only ever reflects what has actually been paid for. Leave `STRIPE_SECRET_KEY` blank and plans stay simulated — picking one applies it immediately with no card involved, exactly as the app behaved before payments existed. See "Payments" below.
 
 ### Command line
 
@@ -183,6 +186,35 @@ python main.py --mark-as-read          # currently a no-op; see note below
 ```
 
 `--mark-as-read` is defined but intentionally non-functional. Because the project only requests the `gmail.readonly` scope, it cannot modify message state under any circumstances. Enabling this would require changing `SCOPES` in `gmail_client.py` to `gmail.modify`, deleting the cached `token.json` to force re-consent, and implementing a call to `service.users().messages().modify(...)` in `main.py`.
+
+### Payments
+
+Optional. Skip this and everything works, just without charging anyone.
+
+**1. Create the products.** In the [Stripe dashboard](https://dashboard.stripe.com/test/products) (keep the **Test mode** toggle on), add a recurring price for each paid plan and copy its `price_...` id:
+
+| Plan | Amount | Billing period |
+|---|---|---|
+| Pro | $2.99 | Monthly |
+| Pro Annual | $29.99 | Yearly |
+| Business | $7.99 | Monthly |
+| Business Annual | $85.99 | Yearly |
+
+These must match the figures in `plans.py` — Stripe charges the amount, and `plans.py` only decides what the page *says*. Nothing checks that the two agree.
+
+**2. Add the keys** to `.env`: `STRIPE_SECRET_KEY` (from [API keys](https://dashboard.stripe.com/test/apikeys), starts `sk_test_`) and the four `STRIPE_PRICE_*` ids.
+
+**3. Forward webhooks while developing.** Payment is only real once Stripe says so, and Stripe can't reach `localhost` on its own. Install the [Stripe CLI](https://stripe.com/docs/stripe-cli), then in a second terminal:
+
+```bash
+stripe listen --forward-to localhost:5000/stripe/webhook
+```
+
+It prints a `whsec_...` secret — put that in `.env` as `STRIPE_WEBHOOK_SECRET` and restart the app. Deployed, you instead add the endpoint under [Webhooks](https://dashboard.stripe.com/test/webhooks) with events `checkout.session.completed`, `customer.subscription.updated` and `customer.subscription.deleted`, and use the signing secret it gives you.
+
+**4. Test it** with card `4242 4242 4242 4242`, any future expiry, any CVC. No real money moves in test mode.
+
+Signing up for a paid plan creates the account on Free and sends the user to Checkout after they confirm their email; the plan is granted when Stripe confirms payment. Abandoning checkout simply leaves a working Free account. Card changes and cancellations happen in Stripe's billing portal, reachable from **Manage billing** on the dashboard — a cancelled or lapsed subscription drops the account back to Free automatically.
 
 ### Testing
 
@@ -209,6 +241,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 | `app.py` | Web platform entry point. Flask routes, sessions, and login handling. |
 | `gmail_oauth.py` | Web OAuth2 flow and per-user token refresh. |
 | `database.py` | SQLite schema and queries. |
+| `billing.py` | Stripe Checkout, the billing portal, and webhook verification. |
 | `encryption.py` | Encrypts and decrypts stored Gmail tokens. |
 | `mailer.py` | Sends signup confirmation codes over SMTP. |
 | `plans.py` | Plan definitions and per-analysis email limits. |
@@ -237,6 +270,7 @@ python test_classifier.py     # run the classifier on sample emails (uses OpenAI
 - Signup requires confirming the email address with a 6-digit code, so an account cannot be created for an inbox the person does not control. Codes come from `secrets` (not `random`), expire after 15 minutes, and are wiped once used. Five wrong guesses locks the code, which is what stops all one million combinations from being tried.
 - Gmail tokens are **encrypted before being written to the database**, using Fernet (AES-CBC with an HMAC) from the `cryptography` package. The key lives in `YUMS_ENCRYPTION_KEY` in `.env`, never in the database, so a copy of `yums.db` on its own cannot be used to reach anyone's inbox. Tokens written before this existed are encrypted in place the next time the app starts.
 - Saved reports deliberately store only the sender, subject, date, category, and summary. Email **bodies are discarded** after classification rather than kept in the database.
+- Accounts can be deleted outright, from the dashboard. It takes two confirmations, the second requiring the account's email address and password to be typed in. Deleting removes the account and every saved report, cancels any Stripe subscription so the card stops being charged, and asks Google to revoke the Gmail grant rather than merely forgetting the token — so Yums disappears from the user's Google account permissions too.
 - Reports are scoped to their owner at the query level (`WHERE id = ? AND user_id = ?`), so changing the number in a `/results/<id>` URL cannot expose another account's report.
 - Session cookies are `HttpOnly` and `SameSite=Lax`, which keeps another site from making a logged-in browser POST to `/analyze`.
 
@@ -249,7 +283,8 @@ The web platform is a working implementation, not a hardened deployment. At mini
 - **No rate limiting or login throttling** exists, so nothing slows down repeated password guesses or someone hammering the analyze button. Confirmation codes are the exception — those are capped at five attempts.
 - **Configure SMTP.** With `SMTP_HOST`/`SMTP_USERNAME`/`SMTP_PASSWORD` unset, confirmation codes are printed to the server console instead of emailed. That is a convenience for local development; in production it means anyone who can read the logs can finish someone else's signup, and it defeats the point of confirming the address at all.
 - **Confirmation codes are stored in plain text** in the database, alongside a 15-minute expiry. Hashing them would be better if the database is ever exposed.
-- **Plans are not enforced by payment.** Anyone can pick Business at signup for free until real billing is wired in.
+- **Configure Stripe, or plans aren't enforced by payment.** With `STRIPE_SECRET_KEY` unset the app deliberately hands out any plan for free.
+- **Prices live in two places.** `plans.py` decides what the pricing page says; Stripe decides what the customer is charged. Change one and you must change the other.
 
 ---
 

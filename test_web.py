@@ -111,8 +111,27 @@ def run_checks() -> int:
     import encryption
     os.environ["YUMS_ENCRYPTION_KEY"] = encryption.generate_key()
 
+    # Blank the SMTP settings so these checks can never send real email.
+    #
+    # This matters more than it looks. app.py calls load_dotenv() when it's
+    # imported, which would otherwise pull real SMTP credentials out of .env
+    # and send a confirmation code to every made-up address below - and those
+    # bounce back into somebody's actual inbox. Setting the variables to ""
+    # rather than deleting them is deliberate: load_dotenv() won't overwrite
+    # a variable that's already set, and "" counts as set.
+    for smtp_variable in ("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"):
+        os.environ[smtp_variable] = ""
+
     import app as webapp
     import database
+    import mailer
+
+    # Belt and braces. If the line above ever stops working, stop here rather
+    # than emailing a few dozen strangers.
+    if mailer.is_configured():
+        print("REFUSING TO RUN: email is still configured, so these checks would")
+        print("send real messages to the test addresses. Fix that first.")
+        sys.exit(1)
 
     checker = Checker()
     check = checker.check
@@ -146,26 +165,26 @@ def run_checks() -> int:
     print("\n-- signup rejects bad input --")
     response = client.post("/signup", data={"email": "notanemail", "password": "longenough1", "plan": "free"})
     check("malformed email rejected", b"valid email address" in response.data)
-    response = client.post("/signup", data={"email": "a@b.com", "password": "short", "plan": "free"})
+    response = client.post("/signup", data={"email": "a@example.invalid", "password": "short", "plan": "free"})
     check("short password rejected", b"at least 8 characters" in response.data)
-    response = client.post("/signup", data={"email": "a@b.com", "password": "longenough1", "plan": "gold"})
+    response = client.post("/signup", data={"email": "a@example.invalid", "password": "longenough1", "plan": "gold"})
     check("made-up plan rejected", b"available plans" in response.data)
-    check("none of those created an account", database.get_user_by_email("a@b.com") is None)
+    check("none of those created an account", database.get_user_by_email("a@example.invalid") is None)
 
     print("\n-- signup works --")
     response = client.post("/signup",
-                           data={"email": "Boss@Company.com", "password": "correcthorse", "plan": "pro"})
+                           data={"email": "Boss@Example.invalid", "password": "correcthorse", "plan": "pro"})
     check("signup sends you to confirm your email, not straight in",
           response.status_code == 302 and "/verify" in response.headers["Location"],
           response.headers.get("Location"))
-    user = database.get_user_by_email("boss@company.com")
+    user = database.get_user_by_email("boss@example.invalid")
     check("email saved in lowercase", user is not None)
     check("chosen plan saved", user and user["plan"] == "pro", user["plan"] if user else None)
     check("password stored hashed, not in plaintext",
           user and "correcthorse" not in user["password_hash"])
     check("gmail starts disconnected", user and user["gmail_token"] is None)
     response = client.post("/signup",
-                           data={"email": "boss@company.com", "password": "another1234", "plan": "free"})
+                           data={"email": "boss@example.invalid", "password": "another1234", "plan": "free"})
     check("same email can't sign up twice", b"already an account" in response.data)
 
     print("\n-- confirming the emailed code --")
@@ -275,29 +294,29 @@ def run_checks() -> int:
 
     print("\n-- one account can't read another's report --")
     other = webapp.app.test_client()
-    signup_and_confirm(other, database, "other@company.com", "hunter2hunter2", "free")
+    signup_and_confirm(other, database, "other@example.invalid", "hunter2hunter2", "free")
     response = other.get(f"/results/{run_id}", follow_redirects=True)
     check("other account can't see the report", b"sign your benefits form" not in response.data)
 
     print("\n-- login and logout --")
     check("logout redirects", client.get("/logout").status_code == 302)
     check("logged-out user bounced from dashboard", client.get("/dashboard").status_code == 302)
-    response = client.post("/login", data={"email": "boss@company.com", "password": "wrongpassword"})
+    response = client.post("/login", data={"email": "boss@example.invalid", "password": "wrongpassword"})
     check("wrong password refused", b"Incorrect email or password" in response.data)
-    response = client.post("/login", data={"email": "ghost@nowhere.com", "password": "wrongpassword"})
+    response = client.post("/login", data={"email": "ghost@example.invalid", "password": "wrongpassword"})
     check("unknown account gets the same message (no account fishing)",
           b"Incorrect email or password" in response.data)
-    response = client.post("/login", data={"email": "boss@company.com", "password": "correcthorse"})
+    response = client.post("/login", data={"email": "boss@example.invalid", "password": "correcthorse"})
     check("correct password logs in",
           response.status_code == 302 and "/dashboard" in response.headers["Location"])
 
     print("\n-- logging in before confirming --")
     unconfirmed = webapp.app.test_client()
     unconfirmed.post("/signup",
-                     data={"email": "pending@company.com", "password": "notyetconfirmed", "plan": "free"})
+                     data={"email": "pending@example.invalid", "password": "notyetconfirmed", "plan": "free"})
     unconfirmed.get("/logout")
     response = unconfirmed.post("/login",
-                                data={"email": "pending@company.com", "password": "notyetconfirmed"})
+                                data={"email": "pending@example.invalid", "password": "notyetconfirmed"})
     check("unconfirmed login is sent to the code form",
           response.status_code == 302 and "/verify" in response.headers["Location"],
           response.headers.get("Location"))
@@ -417,7 +436,7 @@ def run_checks() -> int:
     database.fail_run(running_download, "cleanup")
 
     other_download = webapp.app.test_client()
-    signup_and_confirm(other_download, database, "nosy@company.com", "hunter2hunter2", "free")
+    signup_and_confirm(other_download, database, "nosy@example.invalid", "hunter2hunter2", "free")
     response = other_download.get(f"/results/{run_id}/download", follow_redirects=True)
     check("one account can't download another's report",
           b"benefits form" not in response.data)
@@ -458,7 +477,7 @@ def run_checks() -> int:
 
     victim_id = database.create_completed_run(user["id"], SAMPLE_RESULTS)
     intruder = webapp.app.test_client()
-    signup_and_confirm(intruder, database, "thief@company.com", "hunter2hunter2", "free")
+    signup_and_confirm(intruder, database, "thief@example.invalid", "hunter2hunter2", "free")
     response = intruder.post(f"/results/{victim_id}/delete", follow_redirects=True)
     check("one account can't delete another's report",
           database.get_run(victim_id, user["id"]) is not None)
@@ -487,6 +506,154 @@ def run_checks() -> int:
     response = client.get(f"/results/{empty_id}")
     check("a run that found nothing says you're caught up",
           b"all caught up" in response.data)
+
+    print("\n-- billing falls back cleanly with stripe unconfigured --")
+    import billing
+
+    check("stripe is off in these checks", not billing.is_configured())
+    check("nothing is purchasable without it", not billing.is_purchasable("pro"))
+    check("free is never purchasable", not billing.is_purchasable("free"))
+
+    free_client = webapp.app.test_client()
+    free_user = signup_and_confirm(free_client, database, "nostripe@example.invalid",
+                                   "testpassword", "business")
+    check("signup still applies the chosen plan when stripe is off",
+          free_user["plan"] == "business", free_user["plan"])
+    check("and nothing is left pending", not free_user["pending_plan"])
+
+    free_client.post("/upgrade", data={"plan": "pro_annual"})
+    check("changing plan still works without payment",
+          database.get_user_by_id(free_user["id"])["plan"] == "pro_annual")
+
+    response = free_client.get("/billing/portal", follow_redirects=True)
+    check("billing portal declines when there's no subscription",
+          b"no subscription on this account" in response.data)
+
+    print("\n-- billing with stripe configured (fake) --")
+    os.environ["STRIPE_SECRET_KEY"] = "sk_test_fake"
+    for variable, value in [("STRIPE_PRICE_PRO_MONTHLY", "price_pro_m"),
+                            ("STRIPE_PRICE_PRO_ANNUAL", "price_pro_y"),
+                            ("STRIPE_PRICE_BUSINESS_MONTHLY", "price_biz_m"),
+                            ("STRIPE_PRICE_BUSINESS_ANNUAL", "price_biz_y")]:
+        os.environ[variable] = value
+
+    check("paid plans become purchasable", billing.is_purchasable("business_annual"))
+    check("free still isn't", not billing.is_purchasable("free"))
+    check("prices map back to plans",
+          billing.plan_id_for_price("price_biz_m") == "business",
+          billing.plan_id_for_price("price_biz_m"))
+    check("an unknown price maps to nothing",
+          billing.plan_id_for_price("price_nonsense") is None)
+
+    # Signing up for a paid plan must NOT hand out the plan for free.
+    paid_client = webapp.app.test_client()
+    paid_client.post("/signup", data={"email": "payer@example.invalid",
+                                      "password": "testpassword", "plan": "business_annual"})
+    payer = database.get_user_by_email("payer@example.invalid")
+    check("a paid signup starts on free, not the plan they picked",
+          payer["plan"] == "free", payer["plan"])
+    check("the plan they wanted is remembered as pending",
+          payer["pending_plan"] == "business_annual")
+
+    # Stand in for Stripe's checkout call so these checks stay offline.
+    checkout_calls = []
+    real_create_checkout = billing.create_checkout_session
+    billing.create_checkout_session = lambda user, plan_id, success_url, cancel_url: (
+        checkout_calls.append((user["id"], plan_id)) or "https://checkout.stripe.test/pay"
+    )
+
+    response = paid_client.post("/verify", data={"code": payer["verification_code"]})
+    check("confirming email sends a paid signup to checkout",
+          response.status_code == 302
+          and "checkout.stripe.test" in response.headers.get("Location", ""),
+          response.headers.get("Location"))
+    check("checkout was opened for the plan they picked",
+          checkout_calls and checkout_calls[-1] == (payer["id"], "business_annual"),
+          checkout_calls)
+    check("still on free until the payment lands",
+          database.get_user_by_id(payer["id"])["plan"] == "free")
+
+    response = paid_client.get("/dashboard")
+    check("dashboard offers a way to finish paying",
+          b"Complete payment" in response.data and b"Business" in response.data)
+
+    response = paid_client.post("/upgrade", data={"plan": "pro"})
+    check("changing to another paid plan goes to checkout too",
+          response.status_code == 302
+          and "checkout.stripe.test" in response.headers.get("Location", ""))
+    check("and still hands out nothing until paid",
+          database.get_user_by_id(payer["id"])["plan"] == "free")
+
+    billing.create_checkout_session = real_create_checkout
+
+    # What the webhook does when Stripe confirms the payment.
+    webapp.apply_paid_checkout({
+        "client_reference_id": str(payer["id"]),
+        "metadata": {"user_id": str(payer["id"]), "plan_id": "business_annual"},
+        "payment_status": "paid",
+        "customer": "cus_fake123",
+        "subscription": "sub_fake123",
+    })
+    payer = database.get_user_by_id(payer["id"])
+    check("a paid checkout grants the plan", payer["plan"] == "business_annual")
+    check("the stripe customer is remembered", payer["stripe_customer_id"] == "cus_fake123")
+    check("the subscription is recorded", payer["stripe_subscription_id"] == "sub_fake123")
+    check("pending plan is cleared once paid", not payer["pending_plan"])
+
+    # Stripe retries webhooks, so this has to be safe to repeat.
+    webapp.apply_paid_checkout({
+        "client_reference_id": str(payer["id"]),
+        "metadata": {"user_id": str(payer["id"]), "plan_id": "business_annual"},
+        "payment_status": "paid", "customer": "cus_fake123", "subscription": "sub_fake123",
+    })
+    check("replaying the same webhook changes nothing",
+          database.get_user_by_id(payer["id"])["plan"] == "business_annual")
+
+    # An unpaid session must never grant anything.
+    webapp.apply_paid_checkout({
+        "client_reference_id": str(payer["id"]),
+        "metadata": {"user_id": str(payer["id"]), "plan_id": "pro"},
+        "payment_status": "unpaid", "customer": "cus_fake123", "subscription": "sub_x",
+    })
+    check("an unpaid checkout grants nothing",
+          database.get_user_by_id(payer["id"])["plan"] == "business_annual")
+
+    # Plan switched inside Stripe's billing portal.
+    webapp.apply_subscription_change({
+        "customer": "cus_fake123", "id": "sub_fake123", "status": "active",
+        "items": {"data": [{"price": {"id": "price_pro_m"}}]},
+    }, ended=False)
+    check("a plan switch made in stripe is mirrored here",
+          database.get_user_by_id(payer["id"])["plan"] == "pro")
+
+    # Payment failure - subscription goes past_due.
+    webapp.apply_subscription_change({
+        "customer": "cus_fake123", "id": "sub_fake123", "status": "past_due",
+        "items": {"data": [{"price": {"id": "price_pro_m"}}]},
+    }, ended=False)
+    check("a lapsed subscription drops back to free",
+          database.get_user_by_id(payer["id"])["plan"] == "free")
+
+    # Cancellation.
+    database.activate_subscription(payer["id"], "business", "sub_fake123")
+    webapp.apply_subscription_change({"customer": "cus_fake123", "id": "sub_fake123"},
+                                     ended=True)
+    cancelled = database.get_user_by_id(payer["id"])
+    check("cancelling drops back to free", cancelled["plan"] == "free")
+    check("and forgets the subscription", cancelled["stripe_subscription_id"] is None)
+    check("but keeps the customer for next time",
+          cancelled["stripe_customer_id"] == "cus_fake123")
+
+    print("\n-- the webhook endpoint itself --")
+    response = client.post("/stripe/webhook", data=b"{}",
+                           headers={"Stripe-Signature": "obviously-fake"})
+    check("an unsigned webhook is refused", response.status_code in (400, 500),
+          response.status_code)
+
+    os.environ.pop("STRIPE_SECRET_KEY", None)
+    for variable in ("STRIPE_PRICE_PRO_MONTHLY", "STRIPE_PRICE_PRO_ANNUAL",
+                     "STRIPE_PRICE_BUSINESS_MONTHLY", "STRIPE_PRICE_BUSINESS_ANNUAL"):
+        os.environ.pop(variable, None)
 
     print("\n-- gmail tokens are encrypted at rest --")
     fake_token = '{"token": "secret-access-token", "refresh_token": "secret-refresh-token"}'
@@ -535,6 +702,67 @@ def run_checks() -> int:
           database.get_gmail_token(user["id"]) == fake_token)
 
     database.clear_gmail_token(user["id"])
+
+    print("\n-- deleting an account --")
+    doomed = webapp.app.test_client()
+    doomed_user = signup_and_confirm(doomed, database, "leaving@example.invalid",
+                                     "testpassword", "pro")
+    doomed_run = database.create_completed_run(doomed_user["id"], SAMPLE_RESULTS)
+    database.save_gmail_token(doomed_user["id"], '{"token": "placeholder"}', "leaving@gmail.com")
+
+    response = doomed.get("/dashboard")
+    check("dashboard offers account deletion", b"/account/delete" in response.data)
+
+    response = doomed.get("/account/delete")
+    check("first confirmation loads", response.status_code == 200)
+    check("it spells out what will be deleted",
+          b"leaving@example.invalid" in response.data and b"1 saved report" in response.data)
+    check("it warns about the gmail connection", b"leaving@gmail.com" in response.data)
+    check("account still exists after page one",
+          database.get_user_by_email("leaving@example.invalid") is not None)
+
+    # You shouldn't be able to skip the first page.
+    skipper = webapp.app.test_client()
+    skipper_user = signup_and_confirm(skipper, database, "skipper@example.invalid",
+                                      "testpassword", "free")
+    response = skipper.get("/account/delete/confirm")
+    check("the second page can't be reached directly",
+          response.status_code == 302 and "/account/delete" in response.headers["Location"])
+    response = skipper.post("/account/delete/confirm",
+                            data={"email": "skipper@example.invalid", "password": "testpassword"})
+    check("and can't be posted to directly either",
+          database.get_user_by_email("skipper@example.invalid") is not None)
+
+    response = doomed.post("/account/delete")
+    check("agreeing to page one leads to page two",
+          response.status_code == 302 and "/account/delete/confirm" in response.headers["Location"])
+    check("but still deletes nothing",
+          database.get_user_by_email("leaving@example.invalid") is not None)
+
+    response = doomed.get("/account/delete/confirm")
+    check("second confirmation asks for email and password",
+          b'name="email"' in response.data and b'name="password"' in response.data)
+
+    response = doomed.post("/account/delete/confirm",
+                           data={"email": "wrong@example.invalid", "password": "testpassword"})
+    check("a mistyped email is refused", b"doesn&#39;t match this account" in response.data)
+    check("still not deleted", database.get_user_by_email("leaving@example.invalid") is not None)
+
+    response = doomed.post("/account/delete/confirm",
+                           data={"email": "leaving@example.invalid", "password": "wrongpassword"})
+    check("a wrong password is refused", b"password isn&#39;t right" in response.data)
+    check("still not deleted", database.get_user_by_email("leaving@example.invalid") is not None)
+
+    response = doomed.post("/account/delete/confirm",
+                           data={"email": "leaving@example.invalid", "password": "testpassword"})
+    check("correct details finally delete it",
+          response.status_code == 302 and response.headers["Location"].endswith("/"))
+    check("the account is gone", database.get_user_by_email("leaving@example.invalid") is None)
+    check("their reports went too",
+          database.get_run(doomed_run, doomed_user["id"]) is None)
+
+    response = doomed.get("/dashboard")
+    check("and they're logged out", response.status_code == 302)
 
     print("\n-- gmail connect without google credentials configured --")
     for variable in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"):

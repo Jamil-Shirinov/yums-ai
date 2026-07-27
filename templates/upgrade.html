@@ -28,7 +28,16 @@
       {% endfor %}
     </fieldset>
 
-    <button type="submit" class="btn btn-block">Save my plan</button>
+    {% if billing_enabled %}
+      <p class="form-note">
+        Paid plans continue to Stripe's secure checkout. Moving to Free means
+        cancelling your subscription, which happens in the billing portal.
+      </p>
+    {% endif %}
+
+    <button type="submit" class="btn btn-block">
+      {% if billing_enabled %}Continue{% else %}Save my plan{% endif %}
+    </button>
   </form>
 
   <p class="form-footer">

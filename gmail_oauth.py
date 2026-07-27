@@ -18,6 +18,7 @@ as the CLI does - only the logging-in part is different.
 import json
 import os
 
+import requests
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -89,6 +90,30 @@ def build_service(token_json: str):
             )
 
     return build("gmail", "v1", credentials=creds), refreshed_token_json
+
+# --------------------
+
+def revoke_token(token_json: str) -> bool:
+    """Tell Google to invalidate a token, not just forget it on our side.
+
+    Used when an account is deleted. Deleting our copy would already leave us
+    unable to read anything, but revoking means the grant disappears from the
+    user's Google account too - which is what "delete everything" ought to
+    mean. Best effort: if it fails, the token is being thrown away regardless.
+    """
+
+    try:
+        credentials = Credentials.from_authorized_user_info(json.loads(token_json))
+        response = requests.post(
+            "https://oauth2.googleapis.com/revoke",
+            params={"token": credentials.refresh_token or credentials.token},
+            headers={"content-type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+        return response.status_code == 200
+    except Exception as error:
+        print(f"[revoke_token] couldn't revoke: {type(error).__name__}: {error}")
+        return False
 
 # --------------------
 

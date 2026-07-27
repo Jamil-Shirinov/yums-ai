@@ -36,6 +36,13 @@
       {% endfor %}
     </fieldset>
 
+    {% if billing_enabled %}
+      <p class="form-note">
+        No card needed yet. If you pick a paid plan we'll ask for one after
+        you've confirmed your email address.
+      </p>
+    {% endif %}
+
     <button type="submit" class="btn btn-block">Create account</button>
   </form>
 
