@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Delete your account - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+  <h1>Delete your account?</h1>
+  <p class="form-sub">
+    This can't be undone. Here's exactly what goes:
+  </p>
+
+  <ul class="delete-list">
+    <li>Your account, <strong>{{ user['email'] }}</strong>, and its password</li>
+    <li>
+      {{ report_count }} saved report{% if report_count != 1 %}s{% endif %} —
+      download anything you want to keep first
+    </li>
+    {% if user['gmail_token'] %}
+      <li>
+        Your Gmail connection to <strong>{{ user['gmail_address'] }}</strong>.
+        We'll also tell Google to withdraw our access, so Yums disappears from
+        your Google account permissions.
+      </li>
+    {% endif %}
+    {% if user['stripe_subscription_id'] %}
+      <li>
+        Your <strong>{{ plan['name'] }}</strong> subscription, cancelled
+        immediately. You won't be charged again.
+      </li>
+    {% endif %}
+  </ul>
+
+  <p class="form-sub">
+    Your emails themselves are never touched — Yums only ever had permission
+    to read them.
+  </p>
+
+  <form method="post" action="{{ url_for('delete_account') }}">
+    <button type="submit" class="btn btn-danger btn-block">Continue</button>
+  </form>
+
+  <p class="form-footer">
+    <a href="{{ url_for('dashboard') }}">Cancel, keep my account</a>
+  </p>
+</div>
+
+{% endblock %}

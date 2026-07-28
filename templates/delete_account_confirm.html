@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Confirm deletion - Yums AI{% endblock %}
+
+{% block content %}
+
+<div class="form-card">
+  <h1>Last chance</h1>
+  <p class="form-sub">
+    This is permanent. To confirm it's really you, type your email address and
+    password below.
+  </p>
+
+  <form method="post" action="{{ url_for('delete_account_confirm') }}">
+    <label for="email">Type <strong>{{ user['email'] }}</strong> to confirm</label>
+    <input type="email" id="email" name="email" required autocomplete="off"
+           autofocus placeholder="{{ user['email'] }}">
+
+    <label for="password">Your password</label>
+    <input type="password" id="password" name="password" required
+           autocomplete="current-password">
+
+    <button type="submit" class="btn btn-danger-solid btn-block">
+      Delete my account forever
+    </button>
+  </form>
+
+  <p class="form-footer">
+    <a href="{{ url_for('dashboard') }}">No, take me back</a>
+  </p>
+</div>
+
+{% endblock %}
